@@ -31,7 +31,7 @@
     "status": 0
 }
 
-描述：获取接入到云端的节点信息
+描述：从云端接收用户提交的任务
 接口：POST :6000/user/submit_job
 请求数据：dag_input中用到的字段，需要与计算服务接口文档中返回数据的字段对应
          使用的数据生成器的字段，需要与生成器接口文档中返回数据的字段对应
@@ -54,10 +54,34 @@
     }
 }
 
+描述：指定节点提交任务（该接口不对外直接调用）
+接口：POST `:6000/node/submit_job`
+请求数据：与`:6000/user/submit_job`接口几乎一致，但需要指明unique_job_id（由内部生成切分DAG后生成）
+{
+    "unique_job_id": "GLOBAL_ID_1.SUB_ID_1",
+    "node_addr": "192.168.56.102:7000",
+    "video_id": 1,
+    "generator": "SingleFrameGenerator",
+    "dag": {
+        "flow": ["D", "C"],
+        "input": {
+            "D": {
+                "image": "SingleFrameGenerator.image"
+            },
+            "C": {
+                "image": "SingleFrameGenerator.image",
+                "bbox": "D.bbox",
+                "prob": "D.prob"
+            }
+        }
+    }
+}
+
 描述：数据生成器
 名称：SingleFrameGenerator
 返回数据
 {
+    "seq":
     "image": // RGB图像经过python3的cv2.imencode编码后的字节流
 }
 ```

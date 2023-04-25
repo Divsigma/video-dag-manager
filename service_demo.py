@@ -3,8 +3,10 @@ import queue
 import threading
 import time
 from logging_utils import root_logger
+from werkzeug.serving import WSGIRequestHandler
 
 # 单例：接收输入的主线程
+WSGIRequestHandler.protocol_version = "HTTP/1.1"
 app = flask.Flask(__name__)
 serv_q = {
     "D": queue.Queue(10),
@@ -39,6 +41,9 @@ def get_serv_cbk(serv_name):
     return flask.jsonify(output_ctx)
 
 def start_serv_listener(serv_port=9000):
+    WSGIRequestHandler.protocol_version = "HTTP/1.1"
+    
+
     app.run(host="0.0.0.0", port=serv_port)
 
 if __name__ == "__main__":
