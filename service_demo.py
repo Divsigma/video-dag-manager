@@ -43,7 +43,6 @@ def get_serv_cbk(serv_name):
 def start_serv_listener(serv_port=9000):
     WSGIRequestHandler.protocol_version = "HTTP/1.1"
     
-
     app.run(host="0.0.0.0", port=serv_port)
 
 if __name__ == "__main__":

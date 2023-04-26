@@ -1,12 +1,14 @@
 import cv2
 import numpy
 import flask
+import flask_cors
 import random
 import requests
 import threading
 import time
 import functools
 import argparse
+from werkzeug.serving import WSGIRequestHandler
 
 import field_codec_utils
 from logging_utils import root_logger
@@ -138,10 +140,20 @@ class Manager():
         # 根据job的id移除job
         del self.job_dict[job.get_job_uid()]
 
-    def select_service(self, job, taskname):
+    def invoke_service(self, job, taskname, input_ctx):
         # 根据预测情况，选择task执行的节点
         serv_url = "http://192.168.56.102:9000/get_serv/{}".format(taskname)
-        return serv_url
+
+        root_logger.info("get serv_url={}".format(serv_url))
+        
+        # r = requests.post(url=serv_url, json=input_ctx)
+        r = self.sess.post(url=serv_url, json=input_ctx)
+
+        root_logger.info("got serv result: {}".format(r.text))
+        job.store_task_result(taskname, r.json())
+        # job.store_task_result(taskname, r.output_ctx)
+
+        return True
 
 class Job():
     def __init__(self, job_uid, dag_flow, dag_input, video_id, generator_func, is_stream):
@@ -237,7 +249,10 @@ class Job():
 # 单例变量：主线程任务管理器，Manager
 manager = Manager()
 # 单例变量：后台web线程
+flask.Flask.logger_name = "listlogger"
+WSGIRequestHandler.protocol_version = "HTTP/1.1"
 app = flask.Flask(__name__)
+flask_cors.CORS(app)
 
 # 模拟数据库
 # 单例变量：接入到当前节点的节点信息
@@ -248,6 +263,7 @@ node_status = dict()
 
 # 外部接口：从云端接受用户提交的job参数，包括指定的DAG、数据来源，将/node/submit_job的注册结果返回
 @app.route("/user/submit_job", methods=["POST"])
+@flask_cors.cross_origin()
 def user_submit_job_cbk():
     # 获取用户针对视频流提交的job，转发到对应边端
     para = flask.request.json
@@ -275,6 +291,7 @@ def user_submit_job_cbk():
 
 # 外部接口：从云端获取job执行结果，需要传入job_uid
 @app.route("/user/sync_job_result/<job_uid>", methods=["GET"])
+@flask_cors.cross_origin()
 def user_sync_job_result_cbk(job_uid):
     job_result = manager.get_job_result(job_uid=job_uid)
     return flask.jsonify({"status": 0,
@@ -282,6 +299,7 @@ def user_sync_job_result_cbk(job_uid):
 
 # 内部接口：节点间同步job的执行结果到本地
 @app.route("/node/sync_job_result", methods=["POST"])
+@flask_cors.cross_origin()
 def node_sync_job_result_cbk():
     para = flask.request.json
 
@@ -294,6 +312,7 @@ def node_sync_job_result_cbk():
 
 # 内部接口：接受其他节点传入的job初始化参数，在本地生成可以执行的job
 @app.route("/node/submit_job", methods=["POST"])
+@flask_cors.cross_origin()
 def node_submit_job_cbk():
     # 获取产生job的初始化参数
     para = flask.request.json
@@ -312,6 +331,7 @@ def node_submit_job_cbk():
 
 # 内部接口：其他节点接入当前节点时，需要上传节点状态
 @app.route("/node/update_status", methods=["POST"])
+@flask_cors.cross_origin()
 def node_update_status_cbk():
     para = flask.request.json
     root_logger.info("from {}: got {}".format(flask.request.remote_addr, para))
@@ -334,6 +354,7 @@ def node_update_status_cbk():
 
 # 内部接口：获取当前节点所知的所有节点信息
 @app.route("/node/get_all_status")
+@flask_cors.cross_origin()
 def node_get_all_status_cbk():
     return flask.jsonify({"status": 0, "data": node_status})
 
@@ -353,6 +374,8 @@ if __name__ == "__main__":
     threading.Thread(target=start_dag_listener,
                      args=(args.cloud_port,),
                      daemon=True).start()
+    
+    time.sleep(1)
 
     # 工作节点Manager的背景线程：接收云端下发的job
     threading.Thread(target=start_dag_listener,
@@ -380,15 +403,7 @@ if __name__ == "__main__":
             input_ctx = job.get_task_input(taskname)
             root_logger.info("get input_ctx({}) of taskname({})".format(input_ctx, taskname))
 
-            serv_url = manager.select_service(job, taskname)
-            root_logger.info("get serv_url={}".format(serv_url))
-            
-            # r = requests.post(url=serv_url, json=input_ctx)
-            r = manager.sess.post(url=serv_url, json=input_ctx)
-
-            root_logger.info("got serv result: {}".format(r.text))
-            job.store_task_result(taskname, r.json())
-            # job.store_task_result(taskname, r.output_ctx)
+            manager.invoke_service(job, taskname=taskname, input_ctx=input_ctx)
         
         job.update_status()
         
