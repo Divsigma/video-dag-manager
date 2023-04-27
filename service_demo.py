@@ -30,6 +30,21 @@ def cal(serv_name, input_ctx):
     
     return output_ctx
 
+@app.route("/get_service_dict", methods=["GET"])
+def get_service_dict():
+    return flask.jsonify({
+        "D": {
+            "127.0.0.1:9000": {
+                "url": "http://127.0.0.1:9000/get_serv/D"
+            }
+        },
+        "C": {
+            "127.0.0.1:9000": {
+                "url": "http://127.0.0.1:9000/get_serv/C"
+            }
+        }
+    })
+
 @app.route("/get_serv/<serv_name>", methods=["POST"])
 def get_serv_cbk(serv_name):
     if serv_name not in registered_services:

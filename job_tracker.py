@@ -54,6 +54,10 @@ class Manager():
         self.cloud_addr = None
         self.local_addr = None
 
+        # 计算服务url
+        self.service_cloud_addr = None
+        self.service_url = dict()
+
         # keepalive的http客户端
         self.sess = requests.Session()
 
@@ -77,6 +81,14 @@ class Manager():
 
     def set_cloud_addr(self, cloud_ip, cloud_port):
         self.cloud_addr = cloud_ip + ":" + str(cloud_port)
+    def get_cloud_addr(self):
+        return self.cloud_addr
+    def set_service_cloud_addr(self, addr):
+        self.service_cloud_addr = addr
+    
+    def get_service_dict(self):
+        r = self.sess.get(url="http://{}/get_service_dict".format(self.service_cloud_addr))
+        return r.json()
     
     def join_cloud(self, local_port):
         # 接入云端，汇报自身信息
@@ -103,7 +115,8 @@ class Manager():
         return random.choice(list(self.job_dict.values()))
 
     def submit_job(self, job_uid, dag_flow, dag_input, video_id, generator_func_name):
-        # 启动新的job
+        # 在本地启动新的job
+        assert job_uid not in self.job_dict.keys()
         job = Job(job_uid=job_uid,
                   dag_flow=dag_flow, dag_input=dag_input,
                   video_id=video_id,
@@ -140,34 +153,27 @@ class Manager():
         # 根据job的id移除job
         del self.job_dict[job.get_job_uid()]
 
-    def invoke_service(self, job, taskname, input_ctx):
-        # 根据预测情况，选择task执行的节点
-        serv_url = "http://192.168.56.102:9000/get_serv/{}".format(taskname)
-
-        root_logger.info("get serv_url={}".format(serv_url))
-        
-        # r = requests.post(url=serv_url, json=input_ctx)
-        r = self.sess.post(url=serv_url, json=input_ctx)
-
-        root_logger.info("got serv result: {}".format(r.text))
-        job.store_task_result(taskname, r.json())
-        # job.store_task_result(taskname, r.output_ctx)
-
-        return True
 
 class Job():
     def __init__(self, job_uid, dag_flow, dag_input, video_id, generator_func, is_stream):
+        # job的全局唯一id
         self.job_uid = job_uid
+        # DAG图信息
         self.dag_flow = dag_flow
         self.dag_flow_input_deliminator = "."
         self.dag_input = dag_input
+        self.loop_flag = is_stream
+        # job的数据来源id及数据生成函数
         self.video_id = video_id
         self.generator_func = generator_func
+        # 执行状态机：当前所在的“拓扑步”
         self.topology_step = Manager.BEGIN_TOPO_STEP
-        self.loop_flag = is_stream
+        # 执行状态机：各步骤中间结果
         self.res = dict()
 
         self.manager = None
+        # keepalive的http客户端
+        self.sess = requests.Session()
 
         # 拓扑解析dag图
         # NOTES: 目前仅支持流水线
@@ -226,13 +232,6 @@ class Job():
 
         return self.res[taskname][field]
 
-    def update_status(self):
-        self.topology_step += 1
-
-    def get_next_task_list(self):
-        # taskname拓扑排序聚合
-        return self.next_task_list[self.topology_step]
-
     def get_task_input(self, curr_taskname):
         ctx = dict()
         # 根据当前任务，寻找依赖任务
@@ -242,6 +241,39 @@ class Job():
             prev_field = v.split(self.dag_flow_input_deliminator)[1]
             ctx[k] = self.get_task_result(taskname=prev_taskname, field=prev_field)
         return ctx
+    
+    def invoke_service(self, serv_url, taskname, input_ctx):
+        root_logger.info("get serv_url={}".format(serv_url))
+        
+        r = self.sess.post(url=serv_url, json=input_ctx)
+
+        root_logger.info("got serv result: {}".format(r.text))
+        self.store_task_result(taskname, r.json())
+
+        return True
+    
+    def forward_one_step(self):
+        # 将Job推进一步
+        # TODO: 根据预测情况，选择task执行的节点
+        nt_list = self.next_task_list[self.topology_step]
+        root_logger.info("got job next_task_list - {}".format(nt_list))
+
+        service_dict = self.manager.get_service_dict()
+
+        for taskname in nt_list:
+            # 获取当前任务的输入数据
+            input_ctx = self.get_task_input(taskname)
+            root_logger.info("get input_ctx({}) of taskname({})".format(input_ctx, taskname))
+
+            # TODO: 选择执行task的节点（目前选择随便一个）
+            task_invokable_dict = service_dict[taskname]
+            root_logger.info("get task_invokable_dict {}".format(task_invokable_dict))
+            url = list(task_invokable_dict.values())[0]["url"]
+            root_logger.info("get url {}".format(url))
+
+            self.invoke_service(serv_url=url, taskname=taskname, input_ctx=input_ctx)
+        
+        self.topology_step += 1
 
 
 
@@ -365,17 +397,18 @@ def start_dag_listener(serv_port=6000):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--side', dest='side', type=str, required=True)
-    parser.add_argument('--cloud_ip', dest='cloud_ip', type=str, default='192.168.56.102')
+    parser.add_argument('--cloud_ip', dest='cloud_ip', type=str, default='127.0.0.1')
     parser.add_argument('--cloud_port', dest='cloud_port', type=int, default=6000)
     parser.add_argument('--local_port', dest='local_port', type=int, default=6001)
+    parser.add_argument('--serv_cloud_addr', dest='serv_cloud_addr', type=str, default='127.0.0.1:9000')
     args = parser.parse_args()
 
     # 云端Manager的背景线程：接收节点接入、用户提交任务
-    threading.Thread(target=start_dag_listener,
-                     args=(args.cloud_port,),
-                     daemon=True).start()
-    
-    time.sleep(1)
+    if args.side == 'c':
+        threading.Thread(target=start_dag_listener,
+                        args=(args.cloud_port,),
+                        daemon=True).start()
+        time.sleep(1)
 
     # 工作节点Manager的背景线程：接收云端下发的job
     threading.Thread(target=start_dag_listener,
@@ -384,6 +417,7 @@ if __name__ == "__main__":
 
     manager.set_cloud_addr(cloud_ip=args.cloud_ip, cloud_port=args.cloud_port)
     manager.join_cloud(local_port=args.local_port)
+    manager.set_service_cloud_addr(addr=args.serv_cloud_addr)
     # if args.side == 'e':
     #     manager.join_cloud(local_port=args.local_port)
 
@@ -396,16 +430,11 @@ if __name__ == "__main__":
             continue
 
         root_logger.info("got job - {}".format(job))
-        next_task_list = job.get_next_task_list()
-        root_logger.info("got job next_task_list - {}".format(next_task_list))
         
-        for taskname in next_task_list:
-            input_ctx = job.get_task_input(taskname)
-            root_logger.info("get input_ctx({}) of taskname({})".format(input_ctx, taskname))
-
-            manager.invoke_service(job, taskname=taskname, input_ctx=input_ctx)
-        
-        job.update_status()
+        try:
+            job.forward_one_step()
+        except Exception as e:
+            root_logger.error("caught exception: {}".format(e))
         
         if job.is_end():
             # 当前job完成后，立刻汇报结果
