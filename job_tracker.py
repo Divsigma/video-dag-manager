@@ -34,8 +34,9 @@ def init_task_wrapper(manager, video_id):
     assert ret
 
     input_ctx = dict()
-    input_ctx['image'] = (video_cap.get(cv2.CAP_PROP_POS_FRAMES), numpy.array(frame).shape)
+    # input_ctx['image'] = (video_cap.get(cv2.CAP_PROP_POS_FRAMES), numpy.array(frame).shape)
     # input_ctx['image'] = field_codec_utils.encode_image(frame)
+    input_ctx['image'] = frame.tolist()
 
     root_logger.warning("only unsupport init task with one image frame as input")
     
@@ -86,8 +87,17 @@ class Manager():
     def set_service_cloud_addr(self, addr):
         self.service_cloud_addr = addr
     
-    def get_service_dict(self):
-        r = self.sess.get(url="http://{}/get_service_dict".format(self.service_cloud_addr))
+    def get_available_service_list(self):
+        r = self.sess.get(url="http://{}/get_service_list".format(self.service_cloud_addr))
+        assert isinstance(r.json(), list)
+        return r.json()
+
+    def get_service_dict(self, taskname):
+        r = self.sess.get(url="http://{}/get_execute_url/{}".format(
+            self.service_cloud_addr,
+            taskname
+        ))
+        assert isinstance(r.json(), dict)
         return r.json()
     
     def join_cloud(self, local_port):
@@ -144,7 +154,9 @@ class Manager():
             #                         "job_result": job_result})
     
     def get_job_result(self, job_uid):
-        return self.job_result_dict[job_uid]
+        if job_uid in self.job_result_dict:
+            return self.job_result_dict[job_uid]
+        return None
 
     def restart_job(self, job):
         job.restart()
@@ -205,10 +217,11 @@ class Job():
         return self.loop_flag
 
     def get_job_result(self):
-        # return self.get_task_result(taskname=self.prev_task_list[Manager.END_TASKNAME][0],
-        #                             field="head_pose")
-        return self.get_task_result(taskname="SingleFrameGenerator",
-                                    field="image")
+        head_pose = self.get_task_result(taskname=self.prev_task_list[Manager.END_TASKNAME][0],
+                                         field="head_pose")
+        return len(head_pose)
+        # return self.get_task_result(taskname="SingleFrameGenerator",
+        #                             field="image")
 
     def restart(self):
         self.res = dict()
@@ -247,10 +260,18 @@ class Job():
         
         r = self.sess.post(url=serv_url, json=input_ctx)
 
-        root_logger.info("got serv result: {}".format(r.text))
-        self.store_task_result(taskname, r.json())
+        try:
+            res = r.json()
+            root_logger.info("got service result: {}".format(res.keys()))
+            self.store_task_result(taskname, r.json())
+            return True
 
-        return True
+        except Exception as e:
+            root_logger.error("caught exception: {}".format(e))
+            root_logger.error("got serv result: {}".format(r.text))
+            return False
+
+        return False
     
     def forward_one_step(self):
         # 将Job推进一步
@@ -258,17 +279,24 @@ class Job():
         nt_list = self.next_task_list[self.topology_step]
         root_logger.info("got job next_task_list - {}".format(nt_list))
 
-        service_dict = self.manager.get_service_dict()
+        available_service_list = self.manager.get_available_service_list()
 
         for taskname in nt_list:
+            assert taskname in available_service_list
+            execute_url_dict = self.manager.get_service_dict(taskname)
+
             # 获取当前任务的输入数据
             input_ctx = self.get_task_input(taskname)
-            root_logger.info("get input_ctx({}) of taskname({})".format(input_ctx, taskname))
+            root_logger.info("get input_ctx({}) of taskname({})".format(
+                input_ctx.keys(),
+                taskname
+            ))
 
             # TODO: 选择执行task的节点（目前选择随便一个）
-            task_invokable_dict = service_dict[taskname]
-            root_logger.info("get task_invokable_dict {}".format(task_invokable_dict))
-            url = list(task_invokable_dict.values())[0]["url"]
+            # task_invokable_dict = service_dict[taskname]
+            # root_logger.info("get task_invokable_dict {}".format(task_invokable_dict))
+            root_logger.info("get execute_url_dict {}".format(execute_url_dict))
+            url = list(execute_url_dict.values())[0]["url"]
             root_logger.info("get url {}".format(url))
 
             self.invoke_service(serv_url=url, taskname=taskname, input_ctx=input_ctx)
@@ -398,9 +426,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--side', dest='side', type=str, required=True)
     parser.add_argument('--cloud_ip', dest='cloud_ip', type=str, default='127.0.0.1')
-    parser.add_argument('--cloud_port', dest='cloud_port', type=int, default=6000)
-    parser.add_argument('--local_port', dest='local_port', type=int, default=6001)
-    parser.add_argument('--serv_cloud_addr', dest='serv_cloud_addr', type=str, default='127.0.0.1:9000')
+    parser.add_argument('--cloud_port', dest='cloud_port', type=int, default=5000)
+    parser.add_argument('--local_port', dest='local_port', type=int, default=5001)
+    parser.add_argument('--serv_cloud_addr', dest='serv_cloud_addr', type=str, default='127.0.0.1:5500')
     args = parser.parse_args()
 
     # 云端Manager的背景线程：接收节点接入、用户提交任务
@@ -451,7 +479,7 @@ if __name__ == "__main__":
                 root_logger.info("remove job: {}".format(job))
                 manager.remove_job(job)
 
-        time.sleep(1)
+        # time.sleep(1)
 
 
 

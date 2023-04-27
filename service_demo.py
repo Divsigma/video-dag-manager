@@ -9,20 +9,36 @@ from werkzeug.serving import WSGIRequestHandler
 WSGIRequestHandler.protocol_version = "HTTP/1.1"
 app = flask.Flask(__name__)
 serv_q = {
-    "D": queue.Queue(10),
-    "C": queue.Queue(10)
+    "face_detection": queue.Queue(10),
+    "face_alignment": queue.Queue(10)
 }
 
 # 模拟数据库
-registered_services = ["D", "C"]
+registered_services = ["face_detection", "face_alignment"]
+services_info = {
+    "face_detection": {
+        "127.0.0.1:5500": {
+            "cpu": 1,
+            "mem": 1,
+            "url": "http://127.0.0.1:5500/execute_task/face_detection"
+        }
+    },
+    "face_alignment": {
+        "127.0.0.1:5500": {
+            "cpu": 1,
+            "mem": 1,
+            "url": "http://127.0.0.1:5500/execute_task/face_alignment"
+        }
+    }
+}
 
 def cal(serv_name, input_ctx):
     output_ctx = dict()
-    if serv_name == "D":
+    if serv_name == "face_detection":
         assert "image" in input_ctx.keys()
         output_ctx["bbox"] = [[1,1,3,3],[4,4,7,7],[13,15,30,30],[20,27,35,35]]
         output_ctx["prob"] = [0.1,0.2,0.3,0.4]
-    if serv_name == "C":
+    if serv_name == "face_alignment":
         assert "image" in input_ctx.keys()
         assert "bbox" in input_ctx.keys()
         assert "prob" in input_ctx.keys()
@@ -30,24 +46,21 @@ def cal(serv_name, input_ctx):
     
     return output_ctx
 
-@app.route("/get_service_dict", methods=["GET"])
-def get_service_dict():
-    return flask.jsonify({
-        "D": {
-            "127.0.0.1:9000": {
-                "url": "http://127.0.0.1:9000/get_serv/D"
-            }
-        },
-        "C": {
-            "127.0.0.1:9000": {
-                "url": "http://127.0.0.1:9000/get_serv/C"
-            }
-        }
-    })
+@app.route("/get_service_list", methods=["GET"])
+def get_service_list_cbk():
+    return flask.jsonify(list(services_info.keys()))
 
-@app.route("/get_serv/<serv_name>", methods=["POST"])
+@app.route("/get_execute_url/<serv_name>", methods=["GET"])
+def get_service_dict(serv_name):
+    if serv_name not in services_info.keys():
+        return flask.Response("{'msg': serv_name '{}' not registered}".format(serv_name),
+                              status=500,
+                              mimetype="application/json")
+    return flask.jsonify(services_info[serv_name])
+
+@app.route("/execute_task/<serv_name>", methods=["POST"])
 def get_serv_cbk(serv_name):
-    if serv_name not in registered_services:
+    if serv_name not in services_info.keys():
         return flask.jsonify({"status": 1, "error": "unregistered services"})
     
     input_ctx = flask.request.json
@@ -62,7 +75,7 @@ def start_serv_listener(serv_port=9000):
 
 if __name__ == "__main__":
     # 背景线程：对外接收输入数据，提供计算服务
-    threading.Thread(target=start_serv_listener, args=(9000, ), daemon=True).start()
+    threading.Thread(target=start_serv_listener, args=(5500, ), daemon=True).start()
 
     # 服务线程：从任务队列获取数据，执行服务
     while True:
