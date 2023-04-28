@@ -65,11 +65,13 @@ class Manager():
         # 本地视频流
         self.video_info_list = [
             {"id": 0, "type": "student in classroom"},
-            {"id": 1, "type": "people in meeting-room"}
+            {"id": 1, "type": "people in meeting-room"},
+            {"id": 3, "type": "traffic flow outdoor"}
         ]
         self.video_cap_dict = {
             0: cv2.VideoCapture("input.mov"),
-            1: cv2.VideoCapture("input1.mp4")
+            1: cv2.VideoCapture("input1.mp4"),
+            3: cv2.VideoCapture("traffic-720p.mp4")
         }
 
         # 模拟数据库：记录用户提交的job以及该job的执行结果
@@ -217,9 +219,16 @@ class Job():
         return self.loop_flag
 
     def get_job_result(self):
-        head_pose = self.get_task_result(taskname=self.prev_task_list[Manager.END_TASKNAME][0],
-                                         field="head_pose")
-        return len(head_pose)
+        taskname = self.prev_task_list[Manager.END_TASKNAME][0]
+        result = None
+        if taskname == 'car_detection':
+            result = self.get_task_result(taskname=taskname, field="result")
+        if taskname == 'face_alignment':
+            result = self.get_task_result(taskname=taskname, field="head_pose")
+
+        if result:
+            return len(result)
+        return None
         # return self.get_task_result(taskname="SingleFrameGenerator",
         #                             field="image")
 
@@ -419,8 +428,10 @@ def node_get_all_status_cbk():
     return flask.jsonify({"status": 0, "data": node_status})
 
 
-def start_dag_listener(serv_port=6000):
+def start_dag_listener(serv_port=5000):
     app.run(host="0.0.0.0", port=serv_port)
+    # app.run(port=serv_port)
+    # app.run(host="*", port=serv_port)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
