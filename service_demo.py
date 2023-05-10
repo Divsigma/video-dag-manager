@@ -28,9 +28,14 @@ services_info = {
         }
     },
     "face_alignment": {
-        "127.0.0.1:5500": {
+        "127.0.0.1:xxxx": {
             "cpu": 1,
             "mem": 1,
+            "url": "http://127.0.0.1:5500/execute_task/face_alignment"
+        },
+        "127.0.0.1:5500": {
+            "cpu": 2,
+            "mem": 2,
             "url": "http://127.0.0.1:5500/execute_task/face_alignment"
         }
     },
@@ -53,7 +58,10 @@ def cal(serv_name, input_ctx):
         assert "image" in input_ctx.keys()
         assert "bbox" in input_ctx.keys()
         assert "prob" in input_ctx.keys()
-        output_ctx["head_pose"] = [[0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4]]
+        output_ctx["head_pose"] = [
+            [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4],
+            [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4]
+        ]
     if serv_name == "car_detection":
         assert "image" in input_ctx.keys()
         output_ctx["result"] = {'truck': 2, 'car': 6}

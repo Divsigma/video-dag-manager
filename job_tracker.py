@@ -5,6 +5,7 @@ import flask_cors
 import random
 import requests
 import threading
+import queue
 import time
 import functools
 import argparse
@@ -64,30 +65,44 @@ class Manager():
 
         # 本地视频流
         self.video_info_list = [
-            # {"id": 0, "type": "student in classroom"},
-            # {"id": 1, "type": "people in meeting-room"},
+            {"id": 0, "type": "student in classroom"},
+            {"id": 1, "type": "people in meeting-room"},
             # {"id": 3, "type": "traffic flow outdoor"}
         ]
         self.video_cap_dict = {
-            # 0: cv2.VideoCapture("input.mov"),
-            # 1: cv2.VideoCapture("input1.mp4"),
+            0: cv2.VideoCapture("input.mov"),
+            1: cv2.VideoCapture("input1.mp4"),
             # 3: cv2.VideoCapture("traffic-720p.mp4")
         }
 
-        # 模拟数据库：记录用户提交的job以及该job的执行结果
+        # 模拟数据库：记录下发到本地的job以及该job的执行结果
         self.global_job_count = 0
         self.job_dict = dict()
         self.job_result_dict = dict()
 
-    def get_video_cap_dict(self):
-        return self.video_cap_dict
+        # 调度队列
+        self.unsched_job_q = None
+        # 执行队列
+        self.exec_job_q = None
+
+    def set_unsched_job_q(self, q):
+        self.unsched_job_q = q
+
+    def set_exec_job_q(self, q):
+        self.exec_job_q = q
 
     def set_cloud_addr(self, cloud_ip, cloud_port):
         self.cloud_addr = cloud_ip + ":" + str(cloud_port)
-    def get_cloud_addr(self):
-        return self.cloud_addr
+
     def set_service_cloud_addr(self, addr):
         self.service_cloud_addr = addr
+
+    def get_video_cap_dict(self):
+        return self.video_cap_dict
+
+    def get_cloud_addr(self):
+        return self.cloud_addr
+    
     
     def get_available_service_list(self):
         r = self.sess.get(url="http://{}/get_service_list".format(self.service_cloud_addr))
@@ -120,11 +135,28 @@ class Manager():
         new_id = "GLOBAL_ID_" + str(self.global_job_count)
         return new_id
 
-    def schedule_one_job(self):
-        # 从队列中调度获取job
-        if not self.job_dict:
-            return None
-        return random.choice(list(self.job_dict.values()))
+    def pop_one_exec_job(self):
+        root_logger.info("job_dict keys: {}".format(self.job_dict.keys()))
+
+        # 首先从可执行队列中调度获取所有可执行的job
+        while not self.exec_job_q.empty():
+            new_exec_job = self.exec_job_q.get()
+            
+            assert new_exec_job.get_sched_state() == Job.JOB_STATE_UNSCHED
+            assert isinstance(new_exec_job, Job)
+
+            new_exec_job.start_exec()
+            self.job_dict[new_exec_job.get_job_uid()] = new_exec_job
+
+        # 遍历链表，选择一个可执行的job（参考linux0.12进程调度器）
+        sel_job = None
+        for job in self.job_dict.values():
+            if job.get_sched_state() == Job.JOB_STATE_EXEC:
+                sel_job = job
+                root_logger.info("schedule job-{} to exec".format(job.get_job_uid()))
+
+        root_logger.warning("no job executable")
+        return sel_job
 
     def submit_job(self, job_uid, dag_flow, dag_input, video_id, generator_func_name):
         # 在本地启动新的job
@@ -136,6 +168,8 @@ class Manager():
                   is_stream=True)
         job.set_manager(self)
         self.job_dict[job.get_job_uid()] = job
+        # 将新任务放入待调度队列
+        self.unsched_job_q.put(job)
 
     def submit_job_result(self, job_uid, job_result, report2cloud=False):
         # 将结果保存到本地
@@ -160,8 +194,10 @@ class Manager():
             return self.job_result_dict[job_uid]
         return None
 
-    def restart_job(self, job):
+    def reschedule_job(self, job):
         job.restart()
+        self.unsched_job_q.put(job)
+        root_logger.info("RESTART job-{}: put to unsched_job_q".format(job.get_job_uid()))
 
     def remove_job(self, job):
         # 根据job的id移除job
@@ -169,6 +205,11 @@ class Manager():
 
 
 class Job():
+    JOB_STATE_UNSCHED = 0
+    # JOB_STATE_SCHED = 1
+    JOB_STATE_EXEC = 2
+    JOB_STATE_DONE = 3
+
     def __init__(self, job_uid, dag_flow, dag_input, video_id, generator_func, is_stream):
         # job的全局唯一id
         self.job_uid = job_uid
@@ -180,6 +221,12 @@ class Job():
         # job的数据来源id及数据生成函数
         self.video_id = video_id
         self.generator_func = generator_func
+        # 调度状态机：执行计划
+        self.exec_plan = None
+        self.flow_mapping = None
+        self.video_conf = None
+        # 调度状态机：当前调度状态
+        self.sched_state = Job.JOB_STATE_UNSCHED
         # 执行状态机：当前所在的“拓扑步”
         self.topology_step = Manager.BEGIN_TOPO_STEP
         # 执行状态机：各步骤中间结果
@@ -212,8 +259,18 @@ class Job():
         self.manager = manager
         assert isinstance(self.manager, Manager)
 
+    def set_exec_plan(self, plan):
+        self.exec_plan = plan
+        self.flow_mapping = plan['flow_mapping']
+        self.video_conf = plan['video_conf']
+        assert isinstance(self.flow_mapping, dict)
+        assert isinstance(self.video_conf, dict)
+
     def get_job_uid(self):
         return self.job_uid
+    
+    def get_sched_state(self):
+        return self.sched_state
 
     def get_loop_flag(self):
         return self.loop_flag
@@ -233,10 +290,25 @@ class Job():
         #                             field="image")
 
     def restart(self):
+        # 调度状态机
+        self.exec_plan = None
+        self.flow_mapping = None
+        self.video_conf = None
+        self.sched_state = Job.JOB_STATE_UNSCHED
+        # 执行状态机
         self.res = dict()
         self.topology_step = Manager.BEGIN_TOPO_STEP
+    
+    def start_exec(self):
+        self.sched_state = Job.JOB_STATE_EXEC
 
-    def is_end(self):
+    def set2done(self, msg):
+        self.sched_state = Job.JOB_STATE_DONE
+        root_logger.warning("job-{} is set to DONE with \nmsg: {}\n".format(
+            self.get_job_uid(), msg
+        ))
+
+    def end_one_loop(self):
         return self.next_task_list[self.topology_step][0] == Manager.END_TASKNAME
 
     def store_task_result(self, done_taskname, output_ctx):
@@ -294,18 +366,18 @@ class Job():
             assert taskname in available_service_list
             execute_url_dict = self.manager.get_service_dict(taskname)
 
-            # 获取当前任务的输入数据
+            # 根据video_conf，获取当前任务的输入数据
             input_ctx = self.get_task_input(taskname)
             root_logger.info("get input_ctx({}) of taskname({})".format(
                 input_ctx.keys(),
                 taskname
             ))
 
-            # TODO: 选择执行task的节点（目前选择随便一个）
-            # task_invokable_dict = service_dict[taskname]
-            # root_logger.info("get task_invokable_dict {}".format(task_invokable_dict))
+            # 根据flow_mapping，执行task
+            choice = self.flow_mapping[taskname]
             root_logger.info("get execute_url_dict {}".format(execute_url_dict))
-            url = list(execute_url_dict.values())[0]["url"]
+            root_logger.info("get flow_mapping of '{}': {}".format(taskname, choice))
+            url = list(execute_url_dict.values())[choice['node_id']]['url']
             root_logger.info("get url {}".format(url))
 
             self.invoke_service(serv_url=url, taskname=taskname, input_ctx=input_ctx)
@@ -433,6 +505,40 @@ def start_dag_listener(serv_port=5000):
     # app.run(port=serv_port)
     # app.run(host="*", port=serv_port)
 
+
+# 调度器函数：可选模块
+def scheduler_func(dag=None, generator_output=None, resource_info=None, last_plan_res=None):
+    video_conf = {
+        "resolution": "480p",
+        "fps": 30,
+        "encoder": "H264",
+    }
+    flow_mapping = {
+        "face_detection": {
+            "model_id": 0,
+            "node_id": 0,
+        },
+        "face_alignment": {
+            "model_id": 0,
+            "node_id": 1,
+        }
+    }
+    return {"video_conf": video_conf, "flow_mapping": flow_mapping}
+
+# 调度器主循环：从unsched_job_q中取一未调度任务，生成调度计划，修改Job状态，放入待执行队列
+def scheduler_loop(unsched_job_q=None, exec_job_q=None):
+    
+    assert unsched_job_q
+    assert exec_job_q
+
+    while True:
+        job = unsched_job_q.get()
+        
+        plan = scheduler_func()
+        job.set_exec_plan(plan)
+
+        exec_job_q.put(job)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--side', dest='side', type=str, required=True)
@@ -460,9 +566,21 @@ if __name__ == "__main__":
     # if args.side == 'e':
     #     manager.join_cloud(local_port=args.local_port)
 
-    # 工作线程：非抢占式调度job执行，每次调度后执行一个“拓扑步”
+    # 工作节点的Scheduler线程/进程：
+    # 与Manager通信，从Manager获取未调度作业，往Manager提交待执行作业
+    unsched_job_q = queue.Queue(10)
+    exec_job_q= queue.Queue(10)
+    manager.set_unsched_job_q(unsched_job_q)
+    manager.set_exec_job_q(exec_job_q)
+    threading.Thread(target=scheduler_loop,
+                     args=(unsched_job_q, exec_job_q),
+                     daemon=True).start()
+
+    # 工作节点Manager的执行线程（一个线程模拟一个CPU核）：
+    # 一个确定了执行计划的Job相当于一个进程
+    # 非抢占式选取job执行，每次选取后执行一个“拓扑步”
     while True:
-        job = manager.schedule_one_job()
+        job = manager.pop_one_exec_job()
         if job is None:
             root_logger.warning("no job, sleep for 4 sec")
             time.sleep(4)
@@ -473,9 +591,12 @@ if __name__ == "__main__":
         try:
             job.forward_one_step()
         except Exception as e:
+            job.set2done(msg=e)
             root_logger.error("caught exception: {}".format(e))
+            root_logger.warning("remove job: {}".format(job))
+            manager.remove_job(job)
         
-        if job.is_end():
+        if job.end_one_loop():
             # 当前job完成后，立刻汇报结果
             manager.submit_job_result(job_uid=job.get_job_uid(),
                                       job_result=job.get_job_result(),
@@ -485,7 +606,7 @@ if __name__ == "__main__":
             # NOTES：job的generator_func需要维护状态机，持续生成数据
             if job.get_loop_flag():
                 root_logger.info("restart job: {}".format(job))
-                manager.restart_job(job)
+                manager.reschedule_job(job)
             else:
                 root_logger.info("remove job: {}".format(job))
                 manager.remove_job(job)
