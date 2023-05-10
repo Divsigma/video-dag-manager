@@ -64,14 +64,14 @@ class Manager():
 
         # 本地视频流
         self.video_info_list = [
-            {"id": 0, "type": "student in classroom"},
-            {"id": 1, "type": "people in meeting-room"},
-            {"id": 3, "type": "traffic flow outdoor"}
+            # {"id": 0, "type": "student in classroom"},
+            # {"id": 1, "type": "people in meeting-room"},
+            # {"id": 3, "type": "traffic flow outdoor"}
         ]
         self.video_cap_dict = {
-            0: cv2.VideoCapture("input.mov"),
-            1: cv2.VideoCapture("input1.mp4"),
-            3: cv2.VideoCapture("traffic-720p.mp4")
+            # 0: cv2.VideoCapture("input.mov"),
+            # 1: cv2.VideoCapture("input1.mp4"),
+            # 3: cv2.VideoCapture("traffic-720p.mp4")
         }
 
         # 模拟数据库：记录用户提交的job以及该job的执行结果
