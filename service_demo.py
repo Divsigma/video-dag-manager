@@ -2,6 +2,7 @@ import flask
 import queue
 import threading
 import time
+import json
 from logging_utils import root_logger
 from werkzeug.serving import WSGIRequestHandler
 
@@ -19,6 +20,35 @@ registered_services = [
     "face_alignment",
     "car_detection"
 ]
+
+resource_info = {
+    "192.168.56.102": {
+        "face_detection": {
+            "n_process": 1,
+            "cpu_ratio": 0.8,
+            "mem_ratio": 0.4
+        },
+        "face_alignment": {
+            "n_process": 1,
+            "cpu_ratio": 0.8,
+            "mem_ratio": 0.4
+        }
+    },
+    # "114.212.81.11": {
+    "192.168.56.102": {
+        "face_detection": {
+            "n_process": 1,
+            "cpu_ratio": 0.8,
+            "mem_ratio": 0.4
+        },
+        "face_alignment": {
+            "n_process": 1,
+            "cpu_ratio": 0.8,
+            "mem_ratio": 0.4
+        }
+    },
+}
+
 services_info = {
     "face_detection": {
         "127.0.0.1:5500": {
@@ -72,6 +102,10 @@ def cal(serv_name, input_ctx):
 def get_service_list_cbk():
     return flask.jsonify(list(services_info.keys()))
 
+@app.route("/get_resource_info", methods=["GET"])
+def get_resource_info_cbk():
+    return flask.jsonify(resource_info)
+
 @app.route("/get_execute_url/<serv_name>", methods=["GET"])
 def get_service_dict(serv_name):
     if serv_name not in services_info.keys():
@@ -86,6 +120,7 @@ def get_serv_cbk(serv_name):
         return flask.jsonify({"status": 1, "error": "unregistered services"})
     
     input_ctx = flask.request.json
+    root_logger.info("request content-length={}(Bytes)".format(flask.request.headers.get('Content-Length')))
     # TODO：进程池处理请求并返回
     output_ctx = cal(serv_name, input_ctx)
     return flask.jsonify(output_ctx)
