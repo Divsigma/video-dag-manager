@@ -121,24 +121,12 @@
 函数参数：
 
 （1）待映射/调度的DAG Job
-- 参考`POST :5000/node/submit_job`端口的`dag`字段
+- 参考`POST :5000/node/submit_job`端口的`dag`下的`flow`字段
 ```js
-dag = {
-    "flow": ["face_detection", "face_alignment"],
-    "input": {
-        "face_detection": {
-            "image": "SingleFrameGenerator.image"
-        },
-        "face_alignment": {
-            "image": "SingleFrameGenerator.image",
-            "bbox": "face_detection.bbox",
-            "prob": "face_detection.prob"
-        }
-    }
-}
+dag_flow = ["face_detection", "face_alignment"]
 ```
 
-（2）DAG的输入数据信息
+（2）DAG的输入数据信息（暂不考虑）
 - 参考“数据生成器”的返回数据（如，SingleFrameGenerator）
 - 也可以是基于对本次调度的数据流的数据评估信息（如图片复杂度、图片数据大小）
 ```js
