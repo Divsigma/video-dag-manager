@@ -143,9 +143,8 @@ dag = {
 - 也可以是基于对本次调度的数据流的数据评估信息（如图片复杂度、图片数据大小）
 ```js
 generator_output = {
-    "complexity":  // 复杂度评估
     "seq":
-    "image": // RGB图像
+    "image":
 }
 ```
 
@@ -156,13 +155,43 @@ generator_output = {
 - 当前节点与其余节点的上行带宽/下行带宽
 ```js
 // TBD
+resource_info = {
+    "192.168.56.102": {
+        "face_detection": {
+            "n_process": 1,
+            "cpu_ratio": 0.8,
+            "mem_ratio": 0.4
+        },
+        "face_alignment": {
+            "n_process": 1,
+            "cpu_ratio": 0.8,
+            "mem_ratio": 0.4
+        }
+    },
+    "114.212.81.11": {
+        "face_detection": {
+            "n_process": 1,
+            "cpu_ratio": 0.8,
+            "mem_ratio": 0.4
+        },
+        "face_alignment": {
+            "n_process": 1,
+            "cpu_ratio": 0.8,
+            "mem_ratio": 0.4
+        }
+    },
+}
 ```
 
 （4）上一轮调度方案的执行结果（若上一轮调度包含多帧，则取各帧数值结果的平均）
 - 一帧图像经过DAG推理的总时延
 ```js
 last_plan_res = {
-    "delay": 20,  // 单位：秒
+    "delay": {
+        // dag的flow中每个task都统计一次时延
+        "face_detection": 20,
+        "face_alignment": 0.5
+    },
 }
 ```
 
@@ -187,11 +216,11 @@ video_conf = {
 flow_mapping = {
     "face_detection": {
         "model_id": 0,  // 大模型、中模型、小模型
-        "node_id": 0,  // 映射的节点
+        "node_ip": "192.168.56.102",  // 映射的节点
     },
     "face_alignment": {
         "model_id": 0,
-        "node_id": 1,
+        "node_ip": "114.212.81.11",
     }
 }
 ```
