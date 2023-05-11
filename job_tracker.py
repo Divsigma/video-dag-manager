@@ -595,7 +595,7 @@ def scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0
 
     sess = requests.Session()
 
-    import sched_func.yby_scheduler
+    import scheduler_func.yby_scheduler
 
     while True:
         try:
@@ -604,7 +604,7 @@ def scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0
             r = sess.get(url="http://{}/get_resource_info".format(serv_cloud_addr))
             last_plan_result = job.get_plan_result()
             last_plan_result = None if not bool(last_plan_result) else last_plan_result
-            conf, flow_mapping = sched_func.yby_scheduler.scheduler(
+            conf, flow_mapping = scheduler_func.yby_scheduler.scheduler(
                 flow = job.get_dag_flow(),
                 resource_info=r.json(),
                 last_plan_res=last_plan_result,
