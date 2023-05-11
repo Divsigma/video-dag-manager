@@ -195,6 +195,16 @@ last_plan_res = {
 }
 ```
 
+（5）用户约束
+- 时延范围
+- 精度反馈
+```js
+user_constraint = {
+    "delay": [-1, 50],
+    "acc_level": 5,  // 用户给出的精度评级：0~5精确等级递增
+}
+```
+
 
 函数返回：
 
@@ -204,9 +214,16 @@ last_plan_res = {
 - 编码方式
 ```js
 video_conf = {
-    "resolution": "480p",
-    "fps": 30,
-    "encoder": "H264",
+    "face_detection": {
+        "resolution": "480p",
+        "fps": 30,
+        "encoder": "H264",
+    },
+    "face_alignment": {
+        "resolution": "480p",
+        "fps": 30,
+        "encoder": "H264",
+    }
 }
 ```
 
