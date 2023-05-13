@@ -1,6 +1,28 @@
 # video-dag-manager
 
 ## job_tracker
+
+### （1）大致结构
+
+`job_tracker.py`运行后是单进程多线程的，其线程模型如下图所示（目前只有一个工作线程，详见main函数部分）。用户通过/user/submit_job接口针对视频流下发任务，任务被下发到特定的边缘节点后，在边缘节点为任务生成Job对象，然后确定Job执行计划（以下称为“调度”）、根据调度结果执行Job，一段时间后Job可以被重新调度：
+![](./img/job_tracker%E7%BA%BF%E7%A8%8B%E6%A8%A1%E5%9E%8B.png)
+
+三类线程通过Manager类统一管理：
+- app线程：对外提供服务，如用户提交任务、查询视频流信息等，相关接口定义见`job_tracker.py`中app.route
+- scheduler线程：负责执行调度器模块，其调度函数可替换
+- 工作线程：一个工作线程模拟一个CPU核，负责若干个已生成执行计划的Job的执行。目前只有一个工作线程
+
+Manager类：负责管理所有工作线程的Job的状态与执行状态，工作线程需要通过Manager获取一个已确定执行计划的Job来执行。Manager同时提供app线程以对外提供服务。
+
+Job类：记录了DAG作业的执行状态机：调度计划、最后一次DAG执行的各个步骤结果、Job当前状态等
+
+Job状态主要有三类
+- UNSCHED：未生成调度计划
+- EXEC：已生成调度计划，可供CPU调度执行
+- DONE：终止，可能是执行完毕，也可能是执行过程中有报错
+
+### （2）相关接口
+
 ```js
 描述：获取接入到云端的节点信息
 接口：GET :5000/node/get_all_status
@@ -123,7 +145,7 @@
 （1）待映射/调度的DAG Job
 - 参考`POST :5000/node/submit_job`端口的`dag`下的`flow`字段
 ```js
-dag_flow = ["face_detection", "face_alignment"]
+flow = ["face_detection", "face_alignment"]
 ```
 
 （2）DAG的输入数据信息（暂不考虑）
@@ -176,11 +198,28 @@ resource_info = {
 ```js
 last_plan_res = {
     "delay": {
-        // dag的flow中每个task都统计一次时延
         "face_detection": 20,
         "face_alignment": 0.5
     },
+    "iou": {
+        "face_detection"
+    },
+    "mae": {
+        "face_alignment"
+    }
 }
+
+last_plan_res = {
+    "face_detection": {
+        "iou": 20,
+        "delay"
+    },
+    "face_alignment": {
+        "mae": 20,
+        "delay"
+    },
+}
+
 ```
 
 （5）用户约束
