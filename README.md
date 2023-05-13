@@ -143,9 +143,21 @@ Job状态主要有三类
 函数参数：
 
 （1）待映射/调度的DAG Job
-- 参考`POST :5000/node/submit_job`端口的`dag`下的`flow`字段
+- 参考`POST :5000/node/submit_job`端口的`dag`字段
 ```js
-flow = ["face_detection", "face_alignment"]
+"dag" = {
+    "flow": ["face_detection", "face_alignment"],
+    "input": {
+        "face_detection": {
+            "image": "SingleFrameGenerator.image"
+        },
+        "face_alignment": {
+            "image": "SingleFrameGenerator.image",
+            "bbox": "face_detection.bbox",
+            "prob": "face_detection.prob"
+        }
+    }
+}
 ```
 
 （2）DAG的输入数据信息（暂不考虑）

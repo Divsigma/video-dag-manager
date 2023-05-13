@@ -22,31 +22,48 @@ registered_services = [
 ]
 
 resource_info = {
-    "192.168.56.102": {
-        "face_detection": {
-            "n_process": 1,
-            "cpu_ratio": 0.8,
-            "mem_ratio": 0.4
-        },
-        "face_alignment": {
-            "n_process": 1,
-            "cpu_ratio": 0.8,
-            "mem_ratio": 0.4
+    "host": {
+        "192.168.56.102": {
+            "face_detection": {
+                "n_process": 1,
+                "cpu_ratio": 0.8,
+                "mem_ratio": 0.4
+            },
+            "face_alignment": {
+                "n_process": 1,
+                "cpu_ratio": 0.8,
+                "mem_ratio": 0.4
+            }
         }
     },
-    # "114.212.81.11": {
-    "192.168.56.102": {
-        "face_detection": {
-            "n_process": 1,
-            "cpu_ratio": 0.8,
-            "mem_ratio": 0.4
-        },
-        "face_alignment": {
-            "n_process": 1,
-            "cpu_ratio": 0.8,
-            "mem_ratio": 0.4
+    "edge": {
+        "192.168.56.102": {
+            "face_detection": {
+                "n_process": 1,
+                "cpu_ratio": 0.8,
+                "mem_ratio": 0.4
+            },
+            "face_alignment": {
+                "n_process": 1,
+                "cpu_ratio": 0.8,
+                "mem_ratio": 0.4
+            }
         }
     },
+    "cloud": {
+        "192.168.56.102": {
+            "face_detection": {
+                "n_process": 1,
+                "cpu_ratio": 0.8,
+                "mem_ratio": 0.4
+            },
+            "face_alignment": {
+                "n_process": 1,
+                "cpu_ratio": 0.8,
+                "mem_ratio": 0.4
+            }
+        }        
+    }
 }
 
 services_info = {

@@ -278,6 +278,11 @@ class Job():
     def get_job_uid(self):
         return self.job_uid
     
+    def get_dag(self):
+        return {"flow": self.dag_flow,
+                "input": self.dag_input,
+                "input_deliminator": self.dag_flow_input_deliminator}
+    
     def get_dag_flow(self):
         return self.dag_flow
     
@@ -558,35 +563,6 @@ def start_dag_listener(serv_port=5000):
     # app.run(port=serv_port)
     # app.run(host="*", port=serv_port)
 
-
-# 调度器函数：可选模块
-def scheduler_func(
-        flow=None, 
-        generator_output=None, 
-        resource_info=None, 
-        last_plan_res=None,
-        user_constraint=None,
-):
-    
-    root_logger.info("last_plan_res=\n{}".format(last_plan_res))
-
-    video_conf = {
-        "resolution": "480p",
-        "fps": 30,
-        "encoder": "H264",
-    }
-    flow_mapping = {
-        "face_detection": {
-            "model_id": 0,
-            "node_ip": "192.168.56.102"
-        },
-        "face_alignment": {
-            "model_id": 0,
-            "node_ip": "192.168.56.102"
-        }
-    }
-    return video_conf, flow_mapping
-
 # 调度器主循环：从unsched_job_q中取一未调度任务，生成调度计划，修改Job状态，放入待执行队列
 def scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0.1:5500"):
     
@@ -595,7 +571,7 @@ def scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0
 
     sess = requests.Session()
 
-    import scheduler_func.yby_scheduler
+    import scheduler_func.demo_scheduler
 
     while True:
         try:
@@ -604,11 +580,12 @@ def scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0
             r = sess.get(url="http://{}/get_resource_info".format(serv_cloud_addr))
             last_plan_result = job.get_plan_result()
             last_plan_result = None if not bool(last_plan_result) else last_plan_result
-            conf, flow_mapping = scheduler_func.yby_scheduler.scheduler(
-                flow = job.get_dag_flow(),
+            conf, flow_mapping = scheduler_func.demo_scheduler.scheduler(
+                # flow=job.get_dag_flow(),
+                dag=job.get_dag(),
                 resource_info=r.json(),
                 last_plan_res=last_plan_result,
-                user_constraint={ "delay": [-1, 50],  "acc_level": 5 }
+                user_constraint={ "delay": [0, 0.1],  "acc_level": 5 }
             )
             job.set_plan(video_conf=conf, flow_mapping=flow_mapping)
 
