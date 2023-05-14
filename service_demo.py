@@ -101,6 +101,7 @@ def cal(serv_name, input_ctx):
         assert "image" in input_ctx.keys()
         output_ctx["bbox"] = [[1,1,3,3],[4,4,7,7],[13,15,30,30],[20,27,35,35]]
         output_ctx["prob"] = [0.1,0.2,0.3,0.4]
+        time.sleep(1)
     if serv_name == "face_alignment":
         assert "image" in input_ctx.keys()
         assert "bbox" in input_ctx.keys()
@@ -109,9 +110,11 @@ def cal(serv_name, input_ctx):
             [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4],
             [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4]
         ]
+        time.sleep(0.5)
     if serv_name == "car_detection":
         assert "image" in input_ctx.keys()
         output_ctx["result"] = {'truck': 2, 'car': 6}
+        time.sleep(1)
     
     return output_ctx
 

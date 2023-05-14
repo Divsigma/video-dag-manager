@@ -76,9 +76,9 @@ class Manager():
             # {"id": 3, "type": "traffic flow outdoor"}
         ]
         self.video_cap_dict = {
-            0: cv2.VideoCapture("input.mov"),
-            1: cv2.VideoCapture("input1.mp4"),
-            # 3: cv2.VideoCapture("traffic-720p.mp4")
+            0: cv2.VideoCapture("input/input.mov"),
+            1: cv2.VideoCapture("input/input1.mp4"),
+            # 3: cv2.VideoCapture("input/traffic-720p.mp4")
         }
 
         # 模拟数据库：记录下发到本地的job以及该job的执行结果
@@ -207,8 +207,8 @@ class Manager():
             return self.job_result_dict[job_uid]
         return None
 
-    def restart_job(self, job, should_reschedule=False):
-        job.restart(should_reschedule)
+    def restart_job(self, job):
+        should_reschedule = job.restart()
         if should_reschedule:
             self.unsched_job_q.put(job)
             root_logger.info("prepare to reschedule job-{}: put to unsched_job_q".format(job.get_job_uid()))
@@ -242,10 +242,12 @@ class Job():
         self.video_conf = None
         self.plan_result = dict()
         # 调度状态机：当前调度状态
+        self.n_exec = 0
         self.sched_state = Job.JOB_STATE_UNSCHED
         # 执行状态机：当前所在的“拓扑步”
         self.topology_step = Manager.BEGIN_TOPO_STEP
         # 执行状态机：各步骤中间结果
+        self.n_loop = 0
         self.task_result = dict()
 
         self.manager = None
@@ -291,7 +293,7 @@ class Job():
 
     def get_loop_flag(self):
         return self.loop_flag
-    
+        
     # ---------------------------------------
     # ---- 执行计划与执行计划结果的相关函数 ----
 
@@ -325,21 +327,56 @@ class Job():
         # return self.get_task_result(taskname="SingleFrameGenerator",
         #                             field="image")
 
-    def restart(self, should_reschedule=False):
-        # 调度状态机：重置时保留执行计划
-        if should_reschedule:
-            self.prepare_reschedule()
+    def should_skip_loop(self):
+        if self.video_conf and "nskip" in self.video_conf:
+            nskip_conf = self.video_conf['nskip']
+            if nskip_conf > 0 and (self.n_loop % nskip_conf != 0):
+                return True
+        return False
+
+    def restart(self):
         # 执行状态机
-        self.task_result = dict()
+        self.n_loop += 1
+
+        # 根据已有的调度结果，决定下一帧是否处理。
+        # 若处理，则清空所有结果，否则只清空generator的结果
+        if not self.should_skip_loop():
+            self.task_result = dict()
+            root_logger.info("to handle loop: {}".format(self.n_loop))
+        else:
+            task_result_keys_copy = list(self.task_result.keys())
+            for taskname in task_result_keys_copy:
+                if taskname in Manager.generator_func.keys():
+                    del self.task_result[taskname]
+            root_logger.info("to skip loop: {}".format(self.n_loop))
+        
         self.topology_step = Manager.BEGIN_TOPO_STEP
+
+        # 调度状态机：重置时保留执行计划
+        should_reschedule = False
+        self.n_exec += 1
+        if self.n_exec > 20:
+            # 每20次执行，重新调度一次
+            self.prepare_reschedule()
+            should_reschedule = True
+        
+        return should_reschedule
+
     
     def start_exec(self):
         self.sched_state = Job.JOB_STATE_EXEC
     
     def prepare_reschedule(self):
-        # 重置时保留执行计划
+        # 重置时保留执行计划，生成执行计划的统计结果
+
+        assert self.n_exec > 0
+        for taskname, sum_delay in self.plan_result["delay"].items():
+            self.plan_result["delay"][taskname] = sum_delay / (self.n_exec * 1.0)
+
+        # 重置调度状态
         # self.flow_mapping = None
         # self.video_conf = None
+        self.n_exec = 0
         self.sched_state = Job.JOB_STATE_UNSCHED
 
     def set2done(self, msg):
@@ -348,7 +385,9 @@ class Job():
             self.get_job_uid(), msg
         ))
 
-    def end_one_loop(self):
+    def set_one_loop_to_end(self):
+        self.topology_step = len(self.next_task_list) - 1
+    def one_loop_is_end(self):
         return self.next_task_list[self.topology_step][0] == Manager.END_TASKNAME
 
     # -----------------------------------------
@@ -366,7 +405,7 @@ class Job():
         
         # 对其他task，直接获取Job对象中缓存的中间结果
         assert taskname in self.task_result.keys()
-        root_logger.info("task_res keys: {}".format(self.task_result[taskname].keys()))
+        root_logger.info("taskname({}) task_res keys: {}".format(taskname, self.task_result[taskname].keys()))
         assert field in self.task_result[taskname].keys()
 
         return self.task_result[taskname][field]
@@ -393,10 +432,12 @@ class Job():
             root_logger.info("got service result: {}".format(res.keys()))
             # 记录任务的执行结果
             self.store_task_result(taskname, r.json())
-            # 记录执行计划的执行结果
+            # 累计执行计划的执行结果
             if "delay" not in self.plan_result.keys():
                 self.plan_result["delay"] = dict()
-            self.plan_result["delay"][taskname] = ed_time - st_time
+            if taskname not in self.plan_result["delay"].keys():
+                self.plan_result["delay"][taskname] = 0
+            self.plan_result["delay"][taskname] += ed_time - st_time
             root_logger.info("update plan result: {}".format(self.plan_result))
 
             return True
@@ -413,10 +454,17 @@ class Job():
     # ---- 确定执行计划的Job被CPU调度后，按计划执行任务的主函数（非抢占式） ----
 
     def forward_one_step(self):
-        # 将Job推进一步
-        # TODO: 根据预测情况，选择task执行的节点
+        # TODO：将Job推进一步或根据跳帧率处理
         nt_list = self.next_task_list[self.topology_step]
         root_logger.info("got job next_task_list - {}".format(nt_list))
+
+        # 若跳帧，则仅读取数据但不处理
+        if self.should_skip_loop() and self.topology_step == Manager.BEGIN_TOPO_STEP:
+            root_logger.info("skipping n_loop {}".format(self.n_loop))
+            self.get_task_input(nt_list[0])
+            self.set_one_loop_to_end()
+            return
+
 
         available_service_list = self.manager.get_available_service_list()
 
@@ -658,7 +706,7 @@ if __name__ == "__main__":
             root_logger.warning("remove job: {}".format(job))
             manager.remove_job(job)
         
-        if job.end_one_loop():
+        if job.one_loop_is_end():
             # 当前job完成后，立刻汇报结果
             manager.submit_job_result(job_uid=job.get_job_uid(),
                                       job_result={
@@ -671,7 +719,7 @@ if __name__ == "__main__":
             # NOTES：job的generator_func需要维护状态机，持续生成数据
             if job.get_loop_flag():
                 root_logger.info("restart job: {}".format(job))
-                manager.restart_job(job, should_reschedule=True)
+                manager.restart_job(job)
             else:
                 root_logger.info("remove job: {}".format(job))
                 manager.remove_job(job)

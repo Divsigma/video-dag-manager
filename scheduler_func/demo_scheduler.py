@@ -3,6 +3,7 @@ from logging_utils import root_logger
 prev_video_conf = {
     "resolution": "480p",
     "fps": 30,
+    "nskip": 5,
     "encoder": "H264",
 }
 
