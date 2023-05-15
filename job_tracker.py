@@ -46,6 +46,28 @@ def sfg_get_next_init_task(video_cap=None, video_conf=None):
     
     return input_ctx
 
+def clpg_get_next_init_task(video_cap=None, video_conf=None):
+    assert video_cap
+
+    # 从视频流读取n帧（TODO：作为video_conf的调优参数，但其与时延关系不明朗）
+    input_ctx = dict()
+    input_ctx['clip'] = list()
+
+    st_time = time.time()
+
+    n = 5
+    for i in range(n):
+        ret, frame = video_cap.read()
+        assert ret
+        input_ctx['clip'].append(field_codec_utils.encode_image(frame))
+
+    ed_time = time.time()
+    root_logger.info("time consumed in retriving-data: {}".format(ed_time - st_time))
+
+    root_logger.warning("only unsupport init task with {} image frame as input".format(n))
+    
+    return input_ctx
+
 class Generator():
     def __init__(self, video_id, video_url, gen_func):
         self.video_id = video_id
@@ -68,7 +90,8 @@ class Manager():
     END_TOPO_STEP = 256
     # 设定生成器算子
     generator_func = {
-        "SingleFrameGenerator": functools.partial(sfg_get_next_init_task)
+        "SingleFrameGenerator": functools.partial(sfg_get_next_init_task),
+        "ClipGenerator": functools.partial(clpg_get_next_init_task)
     }
 
     def __init__(self):
@@ -172,14 +195,14 @@ class Manager():
 
         return sel_job
 
-    def submit_job(self, job_uid, dag_flow, dag_input, video_id, generator_func_name):
+    def submit_job(self, job_uid, dag_generator, dag_flow, dag_input, video_id):
         # 在本地启动新的job
         assert job_uid not in self.job_dict.keys()
         job = Job(job_uid=job_uid,
-                  dag_flow=dag_flow, dag_input=dag_input,
+                  dag_generator=dag_generator, dag_flow=dag_flow, dag_input=dag_input,
                   video_id=video_id,
                   video_url=self.video_info_list[video_id]["url"],
-                  generator_func=Manager.generator_func[generator_func_name],
+                  generator_func=Manager.generator_func[dag_generator],
                   is_stream=True)
         job.set_manager(self)
         self.job_dict[job.get_job_uid()] = job
@@ -232,10 +255,11 @@ class Job():
     JOB_STATE_EXEC = 2
     JOB_STATE_DONE = 3
 
-    def __init__(self, job_uid, dag_flow, dag_input, video_id, video_url, generator_func, is_stream):
+    def __init__(self, job_uid, dag_generator, dag_flow, dag_input, video_id, video_url, generator_func, is_stream):
         # job的全局唯一id
         self.job_uid = job_uid
         # DAG图信息
+        self.dag_generator = dag_generator
         self.dag_flow = dag_flow
         self.dag_flow_input_deliminator = "."
         self.dag_input = dag_input
@@ -288,7 +312,8 @@ class Job():
         return self.job_uid
     
     def get_dag(self):
-        return {"flow": self.dag_flow,
+        return {"generator": self.dag_generator,
+                "flow": self.dag_flow,
                 "input": self.dag_input,
                 "input_deliminator": self.dag_flow_input_deliminator}
     
@@ -327,6 +352,8 @@ class Job():
             result = self.get_task_result(taskname=taskname, field="result")
         if taskname == 'face_alignment':
             result = self.get_task_result(taskname=taskname, field="head_pose")
+        if taskname == 'helmet_detection':
+            result = self.get_task_result(taskname=taskname, field="clip_result")
 
         if result:
             return len(result)
@@ -594,14 +621,14 @@ def node_submit_job_cbk():
     # 获取产生job的初始化参数
     para = flask.request.json
     root_logger.info("got {}".format(para))
-    generator_func_name = para["generator"]
-    if generator_func_name not in Manager.generator_func:
-        return flask.jsonify({"status": 1, "msg": "unsupport generator func name"})
+    generator_name = para["dag"]["generator"]
+    if generator_name not in Manager.generator_func.keys():
+        return flask.jsonify({"status": 1, "msg": "unsupport generator name"})
     manager.submit_job(job_uid=para["unique_job_id"],
+                       dag_generator=para["dag"]["generator"],
                        dag_flow=para["dag"]["flow"],
                        dag_input=para["dag"]["input"],
-                       video_id=para["video_id"],
-                       generator_func_name=generator_func_name)
+                       video_id=para["video_id"])
     return flask.jsonify({"status": 0,
                           "msg": "submitted to manager from api: node/submit_job",
                           "job_uid": para["unique_job_id"]})

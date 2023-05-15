@@ -92,6 +92,11 @@ services_info = {
             "mem": 1,
             "url": "http://127.0.0.1:5500/execute_task/car_detection"
         }
+    },
+    "helmet_detection": {
+        "127.0.0.1:5500": {
+            
+        }
     }
 }
 
@@ -115,6 +120,12 @@ def cal(serv_name, input_ctx):
         assert "image" in input_ctx.keys()
         output_ctx["result"] = {'truck': 2, 'car': 6}
         time.sleep(1)
+    if serv_name == "helmet_detection":
+        assert "clip" in input_ctx.keys()
+        output_ctx["clip_result"] = list()
+        for i in range(len(input_ctx["clip"])):
+            output_ctx["clip_result"].append({'ntotal': 5, 'n_no_helmet': 1})
+        time.sleep(2)
     
     return output_ctx
 

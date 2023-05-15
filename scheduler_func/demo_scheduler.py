@@ -1,24 +1,26 @@
 from logging_utils import root_logger
 
-prev_video_conf = {
-    "resolution": "480p",
-    "fps": 30,
-    "nskip": 5,
-    "encoder": "H264",
-}
+prev_video_conf = None
+# prev_video_conf = {
+#     "resolution": "480p",
+#     "fps": 30,
+#     "nskip": 5,
+#     "encoder": "H264",
+# }
 
-prev_flow_mapping = {
-    "face_detection": {
-        "model_id": 0,
-        "node_role": "host",
-        "node_ip": "192.168.56.102"
-    },
-    "face_alignment": {
-        "model_id": 0,
-        "node_role": "host",
-        "node_ip": "192.168.56.102"
-    }
-}
+prev_flow_mapping = None
+# prev_flow_mapping = {
+#     "face_detection": {
+#         "model_id": 0,
+#         "node_role": "host",
+#         "node_ip": "192.168.56.102"
+#     },
+#     "face_alignment": {
+#         "model_id": 0,
+#         "node_role": "host",
+#         "node_ip": "192.168.56.102"
+#     }
+# }
 
 def get_next_exec_plan(
     dag=None,
@@ -99,6 +101,26 @@ def get_cold_start_plan(
     
     global prev_video_conf, prev_flow_mapping
 
+    cold_video_conf = {
+        "resolution": "480p",
+        "fps": 30,
+        "nskip": 5,
+        "encoder": "H264",
+    }
+
+    cold_flow_mapping = dict()
+
+    for taskname in dag["flow"]:
+        if taskname not in dag["generator"]:
+            cold_flow_mapping[taskname] = {
+                "model_id": 0,
+                "node_role": "host",
+                "node_ip": list(resource_info["host"].keys())[0]
+            }
+
+    prev_video_conf = cold_video_conf
+    prev_flow_mapping = cold_flow_mapping
+
     return prev_video_conf, prev_flow_mapping
 
 def scheduler(
@@ -115,6 +137,7 @@ def scheduler(
         # 基于knowledge base给出一个方案？
         # 选择最高配置？
         # 期望：根据资源情况决定一个合理的配置，以便负反馈快速收敛到稳定方案
+        root_logger.info("to get COLD start executation plan")
         return get_cold_start_plan(
             dag=dag,
             resource_info=resource_info,

@@ -60,8 +60,8 @@ Job状态主要有三类
 {
     "node_addr": "192.168.56.102:7000",
     "video_id": 1,
-    "generator": "SingleFrameGenerator",
     "dag": {
+        "generator": "SingleFrameGenerator",
         "flow": ["SingleFrameGenerator", "face_detection", "face_alignment"],
         "input": {
             "face_detection": {
@@ -83,8 +83,8 @@ Job状态主要有三类
     "unique_job_id": "GLOBAL_ID_1.SUB_ID_1",
     "node_addr": "192.168.56.102:7000",
     "video_id": 1,
-    "generator": "SingleFrameGenerator",
     "dag": {
+        "generator": "SingleFrameGenerator",
         "flow": ["SingleFrameGenerator", "face_detection", "face_alignment"],
         "input": {
             "face_detection": {
@@ -99,12 +99,18 @@ Job状态主要有三类
     }
 }
 
-描述：数据生成器
+描述：单帧数据生成器
 名称：SingleFrameGenerator
 返回数据
 {
-    "seq":
     "image": // RGB图像经过python3的cv2.imencode编码后的字节流
+}
+
+描述：多帧数据生成器
+名称：ClipGenerator
+返回数据
+{
+    "clip" : ["xxx", "bbbb"]
 }
 ```
 
