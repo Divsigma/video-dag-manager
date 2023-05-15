@@ -541,6 +541,7 @@ class Job():
 
 
         available_service_list = self.manager.get_available_service_list()
+        root_logger.info("got available_service_list")
 
         for taskname in nt_list:
             # 对Generator任务，读取数据后返回
@@ -783,8 +784,8 @@ if __name__ == "__main__":
         try:
             job.forward_one_step()
         except Exception as e:
-            job.set2done(msg=e)
-            root_logger.error("caught exception: {}".format(e))
+            job.set2done(msg=[repr(e), e])
+            root_logger.error("caught exception, type={}, msg={}".format(repr(e), e))
             root_logger.warning("remove job: {}".format(job))
             manager.remove_job(job)
         
