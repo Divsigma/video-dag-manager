@@ -16,7 +16,7 @@ import field_codec_utils
 from logging_utils import root_logger
 
 # SingleFrameGenerator的数据生成函数
-def init_task_wrapper(manager, video_id):
+def sfg_get_next_init_task(video_cap=None, video_conf=None):
     # # 模拟产生数据
     # frame = list()
     # for i in range(10):
@@ -26,12 +26,9 @@ def init_task_wrapper(manager, video_id):
     # import numpy
     # frame = numpy.array(frame)
 
-    # 从视频流读取一帧
-    video_cap_dict = manager.get_video_cap_dict()
-    assert video_id in video_cap_dict.keys()
+    assert video_cap
 
-    video_cap = video_cap_dict[video_id]
-    
+    # 从视频流读取一帧
     ret, frame = video_cap.read()
     assert ret
 
@@ -49,13 +46,29 @@ def init_task_wrapper(manager, video_id):
     
     return input_ctx
 
+class Generator():
+    def __init__(self, video_id, video_url, gen_func):
+        self.video_id = video_id
+        self.cap = cv2.VideoCapture(video_url)
+        self.gen_func = gen_func
+    
+    def get_current_clips(self):
+        pass
+
+    def get_next_init_task(self, video_conf=None):
+        input_ctx = self.gen_func(self.cap, video_conf)
+
+        return input_ctx
+
+
 class Manager():
     BEGIN_TASKNAME = "Start"
     BEGIN_TOPO_STEP = 0
     END_TASKNAME = "End"
     END_TOPO_STEP = 256
+    # 设定生成器算子
     generator_func = {
-        "SingleFrameGenerator": functools.partial(init_task_wrapper)
+        "SingleFrameGenerator": functools.partial(sfg_get_next_init_task)
     }
 
     def __init__(self):
@@ -71,15 +84,10 @@ class Manager():
 
         # 本地视频流
         self.video_info_list = [
-            {"id": 0, "type": "student in classroom"},
-            {"id": 1, "type": "people in meeting-room"},
-            # {"id": 3, "type": "traffic flow outdoor"}
+            {"id": 0, "type": "student in classroom", "url": "input/input.mov"},
+            {"id": 1, "type": "people in meeting-room", "url": "input/input1.mp4"},
+            # {"id": 3, "type": "traffic flow outdoor", "url": "input/traffic-720p.mp4"}
         ]
-        self.video_cap_dict = {
-            0: cv2.VideoCapture("input/input.mov"),
-            1: cv2.VideoCapture("input/input1.mp4"),
-            # 3: cv2.VideoCapture("input/traffic-720p.mp4")
-        }
 
         # 模拟数据库：记录下发到本地的job以及该job的执行结果
         self.global_job_count = 0
@@ -102,9 +110,6 @@ class Manager():
 
     def set_service_cloud_addr(self, addr):
         self.service_cloud_addr = addr
-
-    def get_video_cap_dict(self):
-        return self.video_cap_dict
 
     def get_cloud_addr(self):
         return self.cloud_addr
@@ -173,6 +178,7 @@ class Manager():
         job = Job(job_uid=job_uid,
                   dag_flow=dag_flow, dag_input=dag_input,
                   video_id=video_id,
+                  video_url=self.video_info_list[video_id]["url"],
                   generator_func=Manager.generator_func[generator_func_name],
                   is_stream=True)
         job.set_manager(self)
@@ -226,7 +232,7 @@ class Job():
     JOB_STATE_EXEC = 2
     JOB_STATE_DONE = 3
 
-    def __init__(self, job_uid, dag_flow, dag_input, video_id, generator_func, is_stream):
+    def __init__(self, job_uid, dag_flow, dag_input, video_id, video_url, generator_func, is_stream):
         # job的全局唯一id
         self.job_uid = job_uid
         # DAG图信息
@@ -235,8 +241,9 @@ class Job():
         self.dag_input = dag_input
         self.loop_flag = is_stream
         # job的数据来源id及数据生成函数
-        self.video_id = video_id
-        self.generator_func = generator_func
+        self.data_generator = Generator(video_id=video_id, video_url=video_url, gen_func=generator_func)
+        # self.video_id = video_id
+        # self.generator_func = generator_func
         # 调度状态机：执行计划与历史计划的执行结果
         self.flow_mapping = None
         self.video_conf = None
@@ -393,15 +400,19 @@ class Job():
     # -----------------------------------------
     # ---- 与Job的DAG中各个任务执行有关的函数 ----
 
+    def is_generator_task(self, taskname):
+        return taskname in Manager.generator_func.keys()
+
     def store_task_result(self, done_taskname, output_ctx):
         self.task_result[done_taskname] = output_ctx
 
     def get_task_result(self, taskname, field):
-        # 对数据生成的task，通过generator_func获取输入
-        # 注意需要实现为幂等：（1）判断数据是否已经读取（2）且Job重启时需要清空输入
-        if taskname in Manager.generator_func.keys() and \
-           taskname not in self.task_result.keys():
-            self.task_result[taskname] = self.generator_func(self.manager, self.video_id)
+        # # 对数据生成的task，通过generator_func获取输入
+        # # 注意需要实现为幂等：（1）判断数据是否已经读取（2）且Job重启时需要清空输入
+        # if self.is_generator_task(taskname) and \
+        #    taskname not in self.task_result.keys():
+        #     # self.task_result[]
+        #     self.task_result[taskname] = self.generator_func(self.manager, self.video_id)
         
         # 对其他task，直接获取Job对象中缓存的中间结果
         assert taskname in self.task_result.keys()
@@ -459,9 +470,21 @@ class Job():
         root_logger.info("got job next_task_list - {}".format(nt_list))
 
         # 若跳帧，则仅读取数据但不处理
-        if self.should_skip_loop() and self.topology_step == Manager.BEGIN_TOPO_STEP:
+        # if self.should_skip_loop() and self.topology_step == Manager.BEGIN_TOPO_STEP:
+        #     root_logger.info("skipping n_loop {}".format(self.n_loop))
+        #     self.get_task_input(nt_list[0])
+        #     self.set_one_loop_to_end()
+        #     return
+
+        # 若跳帧，则仅读取数据但不处理
+        if self.should_skip_loop():
+            # 逻辑assertion：一个循环执行过程中不会出现self.should_skip_loop()==True情况
             root_logger.info("skipping n_loop {}".format(self.n_loop))
-            self.get_task_input(nt_list[0])
+            taskname = nt_list[0]
+            assert self.is_generator_task(taskname)
+            output_ctx = self.data_generator.get_next_init_task(video_conf=self.video_conf)
+            self.store_task_result(taskname, output_ctx=output_ctx)
+            # 终止本次 DAG执行循环
             self.set_one_loop_to_end()
             return
 
@@ -469,9 +492,16 @@ class Job():
         available_service_list = self.manager.get_available_service_list()
 
         for taskname in nt_list:
+            # 对Generator任务，读取数据后返回
+            if self.is_generator_task(taskname):
+                # 根据video_conf，获取当前任务的输入数据
+                output_ctx = self.data_generator.get_next_init_task(video_conf=self.video_conf)
+                self.store_task_result(taskname, output_ctx=output_ctx)
+                continue
+
+            # 对其他可调用任务，获取输入数据，并调用url
             assert taskname in available_service_list
 
-            # 根据video_conf，获取当前任务的输入数据
             input_ctx = self.get_task_input(taskname)
             root_logger.info("get input_ctx({}) of taskname({})".format(
                 input_ctx.keys(),

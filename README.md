@@ -62,7 +62,7 @@ Job状态主要有三类
     "video_id": 1,
     "generator": "SingleFrameGenerator",
     "dag": {
-        "flow": ["face_detection", "face_alignment"],
+        "flow": ["SingleFrameGenerator", "face_detection", "face_alignment"],
         "input": {
             "face_detection": {
                 "image": "SingleFrameGenerator.image"
@@ -85,7 +85,7 @@ Job状态主要有三类
     "video_id": 1,
     "generator": "SingleFrameGenerator",
     "dag": {
-        "flow": ["face_detection", "face_alignment"],
+        "flow": ["SingleFrameGenerator", "face_detection", "face_alignment"],
         "input": {
             "face_detection": {
                 "image": "SingleFrameGenerator.image"
@@ -146,7 +146,8 @@ Job状态主要有三类
 - 参考`POST :5000/node/submit_job`端口的`dag`字段
 ```js
 "dag" = {
-    "flow": ["face_detection", "face_alignment"],
+    "generator": "SingleFrameGenerator",
+    "flow": ["SingleFrameGenerator", "face_detection", "face_alignment"],
     "input": {
         "face_detection": {
             "image": "SingleFrameGenerator.image"
