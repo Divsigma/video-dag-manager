@@ -76,6 +76,63 @@ Job状态主要有三类
     }
 }
 
+描述：从云端获取指定任务的结果
+接口：GET :5000/user/sync_job_result
+{
+    "result": {
+        // 该部分是列表，代表最近10帧的处理结果
+        "appended_result": [
+            {
+                "#no_helmet": 1,
+                "n_loop": 11
+            },
+            {
+                "#no_helmet": 1,
+                "n_loop": 12
+            },
+            {
+                "#no_helmet": 1,
+                "n_loop": 13
+            },
+            ...
+        ],
+
+        // 该部分是json，代表最近一次调度的调度策略和调度结果
+        "latest_result": {
+            // 当前调度执行计划
+            "plan": {
+                "flow_mapping": {
+                    "face_detection": {
+                        "model_id": 0,
+                        "node_ip": "192.168.56.102",
+                        "node_role": "host"  // node_role有三种可能：host、edge、cloud，前端只区分cloud和非cloud，非cloud显示为“边端”
+                    },
+                    "face_alignment": {
+                        "model_id": 0,
+                        "node_ip": "192.168.56.102",
+                        "node_role": "cloud"
+                    }
+                },
+                "video_conf": {
+                    "encoder": "H264",
+                    "fps": 24,
+                    "nskip": 0,  // 跳帧率，每处理一帧跳nskip帧
+                    "ntracking": 5,  // 追踪率，每处理一帧追踪ntracking帧
+                    "resolution": "360p"
+                }
+            },
+            // 最近一次调度后，DAG执行各步骤的平均结果
+            "plan_result": {
+                "delay": {
+                    "face_detection": 0.35737492098952783,
+                    "face_alignment": 0.35737492098952783
+                }
+            }
+        }
+    },
+    "status": 0
+}
+
 描述：指定节点提交任务（该接口不对外直接调用）
 接口：POST `:5000/node/submit_job`
 请求数据：与`:5000/user/submit_job`接口几乎一致，但需要指明unique_job_id（由内部生成切分DAG后生成）

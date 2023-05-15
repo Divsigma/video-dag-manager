@@ -56,6 +56,8 @@ def clpg_get_next_init_task(video_cap=None, video_conf=None):
     st_time = time.time()
 
     n = 5
+    if 'ntracking' in video_conf.keys():
+        n = video_conf['ntracking']
     for i in range(n):
         ret, frame = video_cap.read()
         assert ret
@@ -73,11 +75,18 @@ class Generator():
         self.video_id = video_id
         self.cap = cv2.VideoCapture(video_url)
         self.gen_func = gen_func
+        self.fpt = 1
     
     def get_current_clips(self):
         pass
+    
+    def get_fpt(self):
+        return self.fpt
 
     def get_next_init_task(self, video_conf=None):
+        self.fpt = 1
+        if "ntracking" in video_conf.keys():
+            self.fpt += video_conf['ntracking']
         input_ctx = self.gen_func(self.cap, video_conf)
 
         return input_ctx
@@ -93,6 +102,8 @@ class Manager():
         "SingleFrameGenerator": functools.partial(sfg_get_next_init_task),
         "ClipGenerator": functools.partial(clpg_get_next_init_task)
     }
+    # 保存执行结果的缓冲大小
+    LIST_BUFFER_SIZE = 10
 
     def __init__(self):
         self.cloud_addr = None
@@ -212,15 +223,20 @@ class Manager():
     def submit_job_result(self, job_uid, job_result, report2cloud=False):
         # 将Job本次提交的结果同步到本地
         if job_uid not in self.job_result_dict:
-            self.job_result_dict[job_uid] = {"appended_result": list(), "plan": dict()}
+            self.job_result_dict[job_uid] = {"appended_result": list(), "latest_result": dict()}
         assert isinstance(job_result, dict)
         assert job_uid in self.job_result_dict
         for k, v in job_result.items():
             assert k in self.job_result_dict[job_uid].keys()
             if k == "appended_result":
+                # 仅保留最近一批结果（防止爆内存）
+                if len(self.job_result_dict[job_uid][k]) > Manager.LIST_BUFFER_SIZE:
+                    del self.job_result_dict[job_uid][k][0]
                 self.job_result_dict[job_uid][k].append(v)
             else:
-                self.job_result_dict[job_uid][k] = v
+                # 直接替换结果
+                assert isinstance(v, dict)
+                self.job_result_dict[job_uid][k].update(v)
 
         # 将Job本次提交的结果同步到云端（注意/node/sync_job_result的处理，要避免死循环）
         if self.cloud_addr == self.local_addr:
@@ -274,6 +290,7 @@ class Job():
         self.plan_result = dict()
         # 调度状态机：当前调度状态
         self.n_exec = 0
+        self.added_plan_result = dict()
         self.sched_state = Job.JOB_STATE_UNSCHED
         # 执行状态机：当前所在的“拓扑步”
         self.topology_step = Manager.BEGIN_TOPO_STEP
@@ -345,19 +362,20 @@ class Job():
     # -------------------------------
     # ---- Job最近一次执行后的结果 ----
 
-    def get_job_result(self):
+    def get_latest_loop_result(self):
         taskname = self.prev_task_list[Manager.END_TASKNAME][0]
         result = None
         if taskname == 'car_detection':
-            result = self.get_task_result(taskname=taskname, field="result")
+            task_result = self.get_task_result(taskname=taskname, field="result")
+            result = {"n_loop": self.n_loop, "#cars": len(task_result)}
         if taskname == 'face_alignment':
-            result = self.get_task_result(taskname=taskname, field="head_pose")
+            task_result = self.get_task_result(taskname=taskname, field="head_pose")
+            result = {"n_loop": self.n_loop, "#headup": len(task_result)}
         if taskname == 'helmet_detection':
-            result = self.get_task_result(taskname=taskname, field="clip_result")
+            task_result = self.get_task_result(taskname=taskname, field="clip_result")
+            result = {"n_loop": self.n_loop, "#no_helmet": task_result[-1]['n_no_helmet']}
 
-        if result:
-            return len(result)
-        return None
+        return result
         # return self.get_task_result(taskname="SingleFrameGenerator",
         #                             field="image")
 
@@ -389,8 +407,8 @@ class Job():
         # 调度状态机：重置时保留执行计划
         should_reschedule = False
         self.n_exec += 1
-        if self.n_exec > 20:
-            # 每20次执行，重新调度一次
+        if self.n_exec > 10:
+            # 每10次执行，重新调度一次
             self.prepare_reschedule()
             should_reschedule = True
         
@@ -404,13 +422,19 @@ class Job():
         # 重置时保留执行计划，生成执行计划的统计结果
 
         assert self.n_exec > 0
-        for taskname, sum_delay in self.plan_result["delay"].items():
-            self.plan_result["delay"][taskname] = sum_delay / (self.n_exec * 1.0)
+        nframe_per_exec = self.data_generator.get_fpt()
+        root_logger.info("n_exec={}, nframe_per_exec={}".format(self.n_exec, nframe_per_exec))
+        for taskname, sum_delay in self.added_plan_result["delay"].items():
+            root_logger.info("sum_delay of taskname({}): {}".format(taskname, sum_delay))
+            self.added_plan_result["delay"][taskname] = sum_delay / (self.n_exec * nframe_per_exec * 1.0)
+
+        self.plan_result = self.added_plan_result
 
         # 重置调度状态
         # self.flow_mapping = None
         # self.video_conf = None
         self.n_exec = 0
+        self.added_plan_result = dict()
         self.sched_state = Job.JOB_STATE_UNSCHED
 
     def set2done(self, msg):
@@ -471,12 +495,12 @@ class Job():
             # 记录任务的执行结果
             self.store_task_result(taskname, r.json())
             # 累计执行计划的执行结果
-            if "delay" not in self.plan_result.keys():
-                self.plan_result["delay"] = dict()
-            if taskname not in self.plan_result["delay"].keys():
-                self.plan_result["delay"][taskname] = 0
-            self.plan_result["delay"][taskname] += ed_time - st_time
-            root_logger.info("update plan result: {}".format(self.plan_result))
+            if "delay" not in self.added_plan_result.keys():
+                self.added_plan_result["delay"] = dict()
+            if taskname not in self.added_plan_result["delay"].keys():
+                self.added_plan_result["delay"][taskname] = 0
+            self.added_plan_result["delay"][taskname] += ed_time - st_time
+            root_logger.info("update added_plan_result: {}".format(self.added_plan_result))
 
             return True
 
@@ -709,7 +733,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # 云端Manager的背景线程：接收节点接入、用户提交任务
-    if args.side == 'c':
+    is_cloud = True if args.side == 'c' else False
+    if is_cloud:
         threading.Thread(target=start_dag_listener,
                         args=(args.cloud_port,),
                         daemon=True).start()
@@ -767,10 +792,13 @@ if __name__ == "__main__":
             # 当前job完成后，立刻汇报结果
             manager.submit_job_result(job_uid=job.get_job_uid(),
                                       job_result={
-                                          "appended_result": job.get_job_result(),
-                                          "plan": job.get_plan()
+                                          "appended_result": job.get_latest_loop_result(),
+                                          "latest_result": {
+                                                "plan": job.get_plan(),
+                                                "plan_result": job.get_plan_result()   
+                                          }
                                       },
-                                      report2cloud=True)
+                                      report2cloud=not is_cloud)
             
             # 若当前job未完成对应数据流的处理，则重启当前job
             # NOTES：job的generator_func需要维护状态机，持续生成数据

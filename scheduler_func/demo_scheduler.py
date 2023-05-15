@@ -104,7 +104,8 @@ def get_cold_start_plan(
     cold_video_conf = {
         "resolution": "480p",
         "fps": 30,
-        "nskip": 5,
+        "nskip": 0,
+        "ntracking": 5,
         "encoder": "H264",
     }
 
