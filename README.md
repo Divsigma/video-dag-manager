@@ -5,9 +5,11 @@
 ### （1）大致结构
 
 `job_tracker.py`运行后是单进程多线程的，其线程模型如下图所示（目前只有一个工作线程，详见main函数部分）。用户通过/user/submit_job接口针对视频流下发任务，任务被下发到特定的边缘节点后，在边缘节点为任务生成Job对象，然后确定Job执行计划（以下称为“调度”）、根据调度结果执行Job，一段时间后Job可以被重新调度：
-![](./img/job_tracker%E7%BA%BF%E7%A8%8B%E6%A8%A1%E5%9E%8B.png)
+
+![job_tracker线程模型](./img/job_tracker线程模型.png)
 
 三类线程通过Manager类统一管理：
+
 - app线程：对外提供服务，如用户提交任务、查询视频流信息等，相关接口定义见`job_tracker.py`中app.route
 - scheduler线程：负责执行调度器模块，其调度函数可替换
 - 工作线程：一个工作线程模拟一个CPU核，负责若干个已生成执行计划的Job的执行。目前只有一个工作线程
@@ -17,11 +19,19 @@ Manager类：负责管理所有工作线程的Job的状态与执行状态，工�
 Job类：记录了DAG作业的执行状态机：调度计划、最后一次DAG执行的各个步骤结果、Job当前状态等
 
 Job状态主要有三类
+
 - UNSCHED：未生成调度计划
 - EXEC：已生成调度计划，可供CPU调度执行
 - DONE：终止，可能是执行完毕，也可能是执行过程中有报错
 
 ### （2）启动方式
+
+版本要求：
+
+- （1）为了开启http的KeepAlive：Werkzeug<=2.0.0，Flask<=2.0.0，Flask-Cors<=2.0.0
+- （2）为了运行预加载模型：pytorch==1.13.0，torchvision==0.14.0，对应版本的cuda和cudnn等
+- （3）其余依赖可依据报错安装
+
 ```shell
 # 伪分布式：单机上，先启动service_demo（监听5500端口），后启动job_tracker（监听5000~5002端口）
 $ python3 service_demo.py
@@ -183,6 +193,7 @@ $ python3 job_tracker.py --side=c --mode=pseudo
 ```
 
 ## service_demo
+
 ```js
 描述：提供D计算服务
 接口：POST :5500/service/face_detection
@@ -214,6 +225,7 @@ $ python3 job_tracker.py --side=c --mode=pseudo
 ## 调度器函数接口
 
 云端集中调度，所以需要有通信接口
+
 ```js
 描述：请求云端调度。云端收到请求后，将包装成scheduler_func需要的输入，传入云端scheduler线程队列（unsched_job_q）。scheduler线程完成调度后，请求对应节点的/node/update_plan接口
 接口：POST: 5001/node/get_plan
@@ -240,7 +252,9 @@ $ python3 job_tracker.py --side=c --mode=pseudo
 函数参数：
 
 （1）待映射/调度的DAG Job
+
 - 参考`POST :5000/user/submit_job`端口的`dag`字段
+
 ```js
 "dag" = {
     "generator": "SingleFrameGenerator",
@@ -259,8 +273,10 @@ $ python3 job_tracker.py --side=c --mode=pseudo
 ```
 
 （2）DAG的输入数据信息（暂不考虑）
+
 - 参考“数据生成器”的返回数据（如，SingleFrameGenerator）
 - 也可以是基于对本次调度的数据流的数据评估信息（如图片复杂度、图片数据大小）
+
 ```js
 generator_output = {
     "seq":
@@ -268,11 +284,12 @@ generator_output = {
 }
 ```
 
-
 （3）资源和服务情况
+
 - 各机器CPU、内存、GPU情况
 - 各机器服务的请求地址
 - 当前节点与其余节点的上行带宽/下行带宽
+
 ```js
 // TBD
 resource_info = {
@@ -304,7 +321,9 @@ resource_info = {
 ```
 
 （4）上一轮调度方案的执行结果（若上一轮调度包含多帧，则取各帧数值结果的平均）
+
 - 一帧图像经过DAG推理的总时延
+
 ```js
 last_plan_res = {
     "delay": {
@@ -333,8 +352,10 @@ last_plan_res = {
 ```
 
 （5）用户约束
+
 - 时延范围
 - 精度反馈
+
 ```js
 user_constraint = {
     "delay": [-1, 50],
@@ -342,13 +363,14 @@ user_constraint = {
 }
 ```
 
-
 函数返回：
 
 （1）视频配置
+
 - 分辨率
 - 跳帧率/fps
 - 编码方式
+
 ```js
 video_conf = {
     "face_detection": {
@@ -365,15 +387,19 @@ video_conf = {
 ```
 
 （2）DAG执行策略
+
 - 字典中的key需要与传入的DAG Job中`flow`各字段匹配
+
 ```js
 flow_mapping = {
     "face_detection": {
         "model_id": 0,  // 大模型、中模型、小模型
+        "node_role": "host",  //放到本地执行
         "node_ip": "192.168.56.102",  // 映射的节点
     },
     "face_alignment": {
         "model_id": 0,
+        "node_role":  "cloud",  // 放到云端执行
         "node_ip": "114.212.81.11",
     }
 }
