@@ -201,6 +201,29 @@ Job状态主要有三类
 ```
 
 ## 调度器函数接口
+
+云端集中调度，所以需要有通信接口
+```js
+描述：请求云端调度。云端收到请求后，将包装成scheduler_func需要的输入，传入云端scheduler线程队列（unsched_job_q）。scheduler线程完成调度后，请求对应节点的/node/update_plan接口
+接口：POST: 5000/node/get_plan
+请求数据：
+{
+    "job_uid":
+    "dag":
+    "last_plan_result":
+    "user_constraint"
+}
+
+描述：云端调度器主动请求，以更新边端的调度计划。边端响应该接口时，将往job_dict[job_uid]中更新执行计划，并设置job为可执行的（JOB_STATE_EXEC）
+接口：POST: 5001/node/update_plan
+请求数据：
+{
+    "job_uid":
+    "video_conf":
+    "flow_mapping":
+}
+```
+
 调度器应封装为一个函数，决定视频流分析配置、并将DAG Job中的dag.flow的各个任务映射到节点。
 
 函数参数：

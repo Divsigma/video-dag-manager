@@ -180,29 +180,76 @@ class Manager():
         self.global_job_count += 1
         new_id = "GLOBAL_ID_" + str(self.global_job_count)
         return new_id
+    
+    # 云端/user/submit_job和云端调度器：争用node_status，维护job_uid和node关系
+    def get_node_addr_by_job_uid(self, job_uid):
+        for node_addr, info in node_status.items():
+            assert "job_uid_list" in info
+            for uid in info["job_uid_list"]:
+                if job_uid == uid:
+                    return node_addr
+        root_logger.error("cannot found job_uid-{} in node_status: {}".format(job_uid, node_status))
+        return None
 
+    def post_reschedule_request(self, job=None):
+        assert isinstance(job, Job)
+        url = "http://{}/node/get_plan".format(self.get_cloud_addr())
+        param = {
+            "job_uid": job.get_job_uid(),
+            "dag": job.get_dag(),
+            "last_plan_result": job.get_plan_result(),
+            "user_constraint": { "delay": [0, 0.1],  "acc_level": 5 }
+        }
+        r = self.sess.post(url=url,
+                           json=param)
+        
+        root_logger.info("posted unsched_req for job-{} to cloud, got r={}".format(job.get_job_uid(), r.json()))
+        
+
+    # 工作节点更新调度计划：与通信进程竞争self.job_dict[job.get_job_uid()]，修改job状态
+    def update_job_plan(self, job_uid, video_conf, flow_mapping):
+        assert job_uid in self.job_dict.keys()
+
+        job = self.job_dict[job_uid]
+        assert isinstance(job, Job)
+        job.set_plan(video_conf=video_conf, flow_mapping=flow_mapping)
+        job.start_exec()
+
+        root_logger.info("start exec job-{}".format(job.get_job_uid()))
+
+    # 工作节点模拟CPU主循环的调度器
     def pop_one_exec_job(self):
         root_logger.info("job_dict keys: {}".format(self.job_dict.keys()))
 
-        # 首先从可执行队列中调度获取所有可执行的job
-        while not self.exec_job_q.empty():
-            new_exec_job = self.exec_job_q.get()
+        # 本地调度器：首先从可执行队列中调度获取所有可执行的job
+        # while not self.exec_job_q.empty():
+        #     new_exec_job = self.exec_job_q.get()
             
-            assert new_exec_job.get_sched_state() == Job.JOB_STATE_UNSCHED
-            assert isinstance(new_exec_job, Job)
+        #     assert new_exec_job.get_sched_state() == Job.JOB_STATE_UNSCHED
+        #     assert isinstance(new_exec_job, Job)
 
-            new_exec_job.start_exec()
-            self.job_dict[new_exec_job.get_job_uid()] = new_exec_job
+        #     new_exec_job.start_exec()
+        #     self.job_dict[new_exec_job.get_job_uid()] = new_exec_job
+
+
+        # 云端调度器：与通信进程竞争self.job_dict[job.get_job_uid()]，修改job状态
+        #            见update_job_plan函数
 
         # 遍历链表，选择一个可执行的job（参考linux0.12进程调度器）
+        # 蓄水池算法
         sel_job = None
+        n_executable_job = 0
         for job in self.job_dict.values():
             if job.get_sched_state() == Job.JOB_STATE_EXEC:
-                sel_job = job
-                root_logger.info("schedule job-{} to exec".format(job.get_job_uid()))
+                n_executable_job += 1
+                if random.randint(1, n_executable_job) == 1:
+                    sel_job = job
         
         if not sel_job:
             root_logger.warning("no job executable")
+        else:
+            assert isinstance(sel_job, Job)
+            root_logger.info("schedule job-{} to exec".format(sel_job.get_job_uid()))
 
         return sel_job
 
@@ -217,8 +264,11 @@ class Manager():
                   is_stream=True)
         job.set_manager(self)
         self.job_dict[job.get_job_uid()] = job
-        # 将新任务放入待调度队列
-        self.unsched_job_q.put(job)
+        self.post_reschedule_request(job)
+
+        # 本地调度（未使用）：将新任务放入待调度队列
+        # self.unsched_job_q.put(job)
+        # 云端调度：
 
     def submit_job_result(self, job_uid, job_result, report2cloud=False):
         # 将Job本次提交的结果同步到本地
@@ -251,14 +301,22 @@ class Manager():
         if job_uid in self.job_result_dict:
             return self.job_result_dict[job_uid]
         return None
-
+    
     def restart_job(self, job):
-        should_reschedule = job.restart()
+        # TODO：工作节点维护用户对任务的约束。
+        assert isinstance(job, Job)
+        should_reschedule = job.prepare_restart()
+
         if should_reschedule:
-            self.unsched_job_q.put(job)
-            root_logger.info("prepare to reschedule job-{}: put to unsched_job_q".format(job.get_job_uid()))
+            # 云端调度
+            self.post_reschedule_request(job)
+            root_logger.info("prepare to reschedule job-{}, posted unsched_req to cloud".format(job.get_job_uid()))
+
+            # 本地调度（未使用）
+            # self.unsched_job_q.put(job)
+            # root_logger.info("prepare to reschedule job-{}: put to unsched_job_q".format(job.get_job_uid()))
         
-        root_logger.info("RESTART job-{}".format(job.get_job_uid()))
+        root_logger.info("done job.prepare_restart(). RESTART job-{}".format(job.get_job_uid()))
 
     def remove_job(self, job):
         # 根据job的id移除job
@@ -386,7 +444,7 @@ class Job():
                 return True
         return False
 
-    def restart(self):
+    def prepare_restart(self):
         # 执行状态机
         self.n_loop += 1
 
@@ -466,6 +524,7 @@ class Job():
         #     self.task_result[taskname] = self.generator_func(self.manager, self.video_id)
         
         # 对其他task，直接获取Job对象中缓存的中间结果
+        root_logger.info("to get task({}) result".format(taskname))
         assert taskname in self.task_result.keys()
         root_logger.info("taskname({}) task_res keys: {}".format(taskname, self.task_result[taskname].keys()))
         assert field in self.task_result[taskname].keys()
@@ -541,14 +600,17 @@ class Job():
 
 
         available_service_list = self.manager.get_available_service_list()
-        root_logger.info("got available_service_list")
+        root_logger.info("got available_service_list: {}".format(available_service_list))
 
         for taskname in nt_list:
+            root_logger.info("to forward taskname={}".format(taskname))
+
             # 对Generator任务，读取数据后返回
             if self.is_generator_task(taskname):
                 # 根据video_conf，获取当前任务的输入数据
                 output_ctx = self.data_generator.get_next_init_task(video_conf=self.video_conf)
                 self.store_task_result(taskname, output_ctx=output_ctx)
+                root_logger.info("done generator task, get_next_init_task({})".format(output_ctx.keys()))
                 continue
 
             # 对其他可调用任务，获取输入数据，并调用url
@@ -604,8 +666,15 @@ def user_submit_job_cbk():
         return flask.jsonify({"status": 1, "error": "cannot found {}".format(node_addr)})
     
     # TODO：切分DAG产生多个SUB_ID
+    unique_job_id = manager.generate_global_job_id() + "." + "SUB_ID"
+
+    # TODO：维护job_uid和节点关系
+    if "job_uid_list" not in node_status[node_addr]:
+        node_status[node_addr]["job_uid_list"] = list()
+    node_status[node_addr]["job_uid_list"].append(unique_job_id)
+
     new_req_para = dict()
-    new_req_para["unique_job_id"] = manager.generate_global_job_id() + "." + "SUB_ID"
+    new_req_para["unique_job_id"] = unique_job_id
     new_req_para.update(para)
     r = manager.sess.post(url="http://{}/node/submit_job".format(node_addr),
                       json=new_req_para)
@@ -681,6 +750,29 @@ def node_update_status_cbk():
 
     return flask.jsonify({"status": 0, "node_addr": node_addr})
 
+# 工作节点内部接口：接受调度计划更新
+@app.route("/node/update_plan", methods=["POST"])
+@flask_cors.cross_origin()
+def node_update_plan_cbk():
+    para = flask.request.json
+    root_logger.info("/node/update_plan got para={}".format(para))
+
+    # 与工作节点模拟CPU执行的主循环竞争manager
+    manager.update_job_plan(job_uid=para['job_uid'], video_conf=para['video_conf'], flow_mapping=para['flow_mapping'])
+
+    return flask.jsonify({"status": 0, "msg": "updated (manager.update_job_plan)"})
+
+# 云端内部接口：接受调度请求
+@app.route("/node/get_plan", methods=["POST"])
+@flask_cors.cross_origin()
+def node_get_plan_cbk():
+    para = flask.request.json
+    root_logger.info("/node/get_plan got para={}".format(para))
+
+    manager.unsched_job_q.put(para)
+    
+    return flask.jsonify({"status": 0, "msg": "accepted (put to unsched_job_q)"})
+
 # 内部接口：获取当前节点所知的所有节点信息
 @app.route("/node/get_all_status")
 @flask_cors.cross_origin()
@@ -693,8 +785,48 @@ def start_dag_listener(serv_port=5000):
     # app.run(port=serv_port)
     # app.run(host="*", port=serv_port)
 
-# 调度器主循环：从unsched_job_q中取一未调度任务，生成调度计划，修改Job状态，放入待执行队列
-def scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0.1:5500"):
+# 云端调度器主循环：从unsched_job_q中取一未调度的任务请求，生成调度计划
+def cloud_scheduler_loop(manager=None):
+    assert manager
+    assert isinstance(manager, Manager)
+
+    unsched_job_q = manager.unsched_job_q
+    exec_job_q = manager.exec_job_q
+    assert unsched_job_q
+    assert exec_job_q
+
+    sess = requests.Session()
+
+    import scheduler_func.demo_scheduler
+
+    while True:
+        try:
+            sched_req = unsched_job_q.get()
+            assert isinstance(sched_req, dict)
+            root_logger.error("got one sched_req from unsched_job_q: {}".format(sched_req))
+
+            job_uid = sched_req['job_uid']
+            node_addr = manager.get_node_addr_by_job_uid(job_uid)
+            assert node_addr
+
+            r = sess.get(url="http://{}/get_resource_info".format(manager.service_cloud_addr))
+            conf, flow_mapping = scheduler_func.demo_scheduler.scheduler(
+                # flow=job.get_dag_flow(),
+                dag=sched_req['dag'],
+                resource_info=r.json(),
+                last_plan_res=sched_req['last_plan_result'],
+                user_constraint=sched_req['user_constraint']
+            )
+
+            r = sess.post(url="http://{}/node/update_plan".format(node_addr),
+                          json={"job_uid": job_uid, "video_conf": conf, "flow_mapping": flow_mapping})
+
+        except Exception as e:
+            root_logger.error("caught exception, type={}, msg={}".format(repr(e), e))
+        
+
+# 本地调度器主循环（未使用）：从unsched_job_q中取一未调度任务，生成调度计划，修改Job状态，放入待执行队列
+def local_scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0.1:5500"):
     
     assert unsched_job_q
     assert exec_job_q
@@ -706,6 +838,7 @@ def scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0
     while True:
         try:
             job = unsched_job_q.get()
+            assert isinstance(job, Job)
 
             r = sess.get(url="http://{}/get_resource_info".format(serv_cloud_addr))
             last_plan_result = job.get_plan_result()
@@ -727,21 +860,23 @@ def scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="127.0.0
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--side', dest='side', type=str, required=True)
+    parser.add_argument('--mode', dest='mode', type=str, required=True)
     parser.add_argument('--cloud_ip', dest='cloud_ip', type=str, default='127.0.0.1')
     parser.add_argument('--cloud_port', dest='cloud_port', type=int, default=5000)
     parser.add_argument('--local_port', dest='local_port', type=int, default=5001)
     parser.add_argument('--serv_cloud_addr', dest='serv_cloud_addr', type=str, default='127.0.0.1:5500')
     args = parser.parse_args()
 
-    # 云端Manager的背景线程：接收节点接入、用户提交任务
     is_cloud = True if args.side == 'c' else False
     if is_cloud:
+        # 云端Manager的背景线程：与工作节点Manager通信，下发job和调度策略；与用户通信，用户提交任务（5000端口）
         threading.Thread(target=start_dag_listener,
                         args=(args.cloud_port,),
                         daemon=True).start()
+
         time.sleep(1)
 
-    # 工作节点Manager的背景线程：接收云端下发的job
+    # 工作节点Manager的背景线程：与云端的Manager通信，同步job状态和调度策略（5001端口）
     threading.Thread(target=start_dag_listener,
                      args=(args.local_port,),
                      daemon=True).start()
@@ -749,36 +884,40 @@ if __name__ == "__main__":
     manager.set_cloud_addr(cloud_ip=args.cloud_ip, cloud_port=args.cloud_port)
     manager.join_cloud(local_port=args.local_port)
     manager.set_service_cloud_addr(addr=args.serv_cloud_addr)
-    # if args.side == 'e':
-    #     manager.join_cloud(local_port=args.local_port)
 
-    # 工作节点的Scheduler线程/进程：
-    # 与Manager通信，从Manager获取未调度作业，往Manager提交待执行作业
-    unsched_job_q = queue.Queue(10)
-    exec_job_q= queue.Queue(10)
-    manager.set_unsched_job_q(unsched_job_q)
-    manager.set_exec_job_q(exec_job_q)
-    threading.Thread(target=scheduler_loop,
-                     args=(unsched_job_q, exec_job_q, args.serv_cloud_addr),
-                     daemon=True).start()
-    # unsched_job_q = mp.Queue(10)
-    # exec_job_q= mp.Queue(10)
-    # manager.set_unsched_job_q(unsched_job_q)
-    # manager.set_exec_job_q(exec_job_q)
-    # mp.Process(target=scheduler_loop,
-    #            args=(unsched_job_q, exec_job_q, args.serv_cloud_addr)).start()
+    # 云端的Scheduler线程/进程：从云端Manager获取未调度作业，计算调度策略，将策略下发工作节点Manager
+    is_pseudo = True if args.mode == 'pseudo' else False
+    if is_cloud:
+        unsched_job_q = queue.Queue(10)
+        exec_job_q= queue.Queue(10)
+        manager.set_unsched_job_q(unsched_job_q)
+        manager.set_exec_job_q(exec_job_q)
+        if is_pseudo:
+            threading.Thread(target=cloud_scheduler_loop,
+                            args=(manager,),
+                            daemon=True).start()
+        else:
+            cloud_scheduler_loop(manager)
+        # unsched_job_q = mp.Queue(10)
+        # exec_job_q= mp.Queue(10)
+        # manager.set_unsched_job_q(unsched_job_q)
+        # manager.set_exec_job_q(exec_job_q)
+        # mp.Process(target=scheduler_loop,
+        #            args=(unsched_job_q, exec_job_q, args.serv_cloud_addr)).start()
 
     # 工作节点Manager的执行线程（一个线程模拟一个CPU核）：
     # 一个确定了执行计划的Job相当于一个进程
     # 非抢占式选取job执行，每次选取后执行一个“拓扑步”
-    while True:
+    while (is_pseudo and is_cloud) or (not is_pseudo and not is_cloud):
         job = manager.pop_one_exec_job()
+
         if job is None:
             sleep_sec = 4
             root_logger.warning(f"---- no job, sleeping for {sleep_sec} sec ----")
             time.sleep(sleep_sec)
             continue
 
+        assert isinstance(job, Job)
         root_logger.info("got job - {}".format(job))
         
         try:
