@@ -7,7 +7,7 @@ root_logger.setLevel(logging.INFO)
 # root_logger.setLevel(logging.WARNING)
 
 formatter = logging.Formatter(
-    '%(asctime)s pid-%(process)d [%(levelname)s] [%(funcName)s] %(message)s - %(filename)s:%(lineno)d',
+    '%(asctime)s pid-%(process)d t-%(threadName)s [%(levelname)s] [%(funcName)s] %(message)s - %(filename)s:%(lineno)d',
     "%m-%d %H:%M:%S"
 )
 
