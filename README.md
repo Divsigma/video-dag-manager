@@ -21,11 +21,18 @@ Job状态主要有三类
 - EXEC：已生成调度计划，可供CPU调度执行
 - DONE：终止，可能是执行完毕，也可能是执行过程中有报错
 
-### （2）相关接口
+### （2）启动方式
+```shell
+# 伪分布式：单机上，先启动service_demo（监听5500端口），后启动job_tracker（监听5000~5002端口）
+$ python3 service_demo.py
+$ python3 job_tracker.py --side=c --mode=pseudo
+```
+
+### （3）相关用户接口
 
 ```js
 描述：获取接入到云端的节点信息
-接口：GET :5000/node/get_all_status
+接口：GET :5000/user/get_all_status
 返回结果
 {
     "data": {
@@ -77,7 +84,7 @@ Job状态主要有三类
 }
 
 描述：从云端获取指定任务的结果
-接口：GET :5000/user/sync_job_result
+接口：GET :5000/user/sync_job_result/<job_uid>
 {
     "result": {
         // 该部分是列表，代表最近10帧的处理结果
@@ -132,9 +139,13 @@ Job状态主要有三类
     },
     "status": 0
 }
+```
 
-描述：指定节点提交任务（该接口不对外直接调用）
-接口：POST `:5000/node/submit_job`
+### （4）相关内部接口
+
+```js
+描述：指定节点提交任务
+接口：POST `:5001/node/submit_job`
 请求数据：与`:5000/user/submit_job`接口几乎一致，但需要指明unique_job_id（由内部生成切分DAG后生成）
 {
     "unique_job_id": "GLOBAL_ID_1.SUB_ID_1",
@@ -205,7 +216,7 @@ Job状态主要有三类
 云端集中调度，所以需要有通信接口
 ```js
 描述：请求云端调度。云端收到请求后，将包装成scheduler_func需要的输入，传入云端scheduler线程队列（unsched_job_q）。scheduler线程完成调度后，请求对应节点的/node/update_plan接口
-接口：POST: 5000/node/get_plan
+接口：POST: 5001/node/get_plan
 请求数据：
 {
     "job_uid":
@@ -229,7 +240,7 @@ Job状态主要有三类
 函数参数：
 
 （1）待映射/调度的DAG Job
-- 参考`POST :5000/node/submit_job`端口的`dag`字段
+- 参考`POST :5000/user/submit_job`端口的`dag`字段
 ```js
 "dag" = {
     "generator": "SingleFrameGenerator",
