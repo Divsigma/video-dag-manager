@@ -465,7 +465,9 @@ class Job():
         result = None
         if taskname == 'car_detection':
             task_result = self.get_task_result(taskname=taskname, field="result")
-            result = {"n_loop": self.n_loop, "#cars": len(task_result)}
+            # result = {"n_loop": self.n_loop, "#cars": len(task_result)}
+            result = {"n_loop": self.n_loop}
+            result.update(task_result)
         if taskname == 'face_alignment':
             task_result = self.get_task_result(taskname=taskname, field="head_pose")
             result = {"n_loop": self.n_loop, "#headup": len(task_result)}

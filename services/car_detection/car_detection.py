@@ -163,9 +163,21 @@ class CarDetection:
         output_ctx = {}
         # output_ctx['image'] = im0
         # 一个包含了所有检测结果的list，每个检测结果包含了一个检测框的坐标、置信度、类别
-        output_ctx['result'] = det.tolist()
-        print(type(output_ctx['result']))
-        print(output_ctx['result'])
+        #                                               六维向量[x1,y1,x2,y2,prob,cls]
+        # print(type(output_ctx['result']))
+        # print(output_ctx['result'])
+        
+        # 返回识别的各个物体个数
+        res_list = det.tolist()
+        ret_dict = dict()
+        for item_info in res_list:
+            cls_name = self.names[item_info[5]]
+            if cls_name not in ret_dict:
+                ret_dict[cls_name] = 0
+            ret_dict[cls_name] += 1
+
+        output_ctx['result'] = ret_dict
+        print(output_ctx)
         
         return output_ctx
 
