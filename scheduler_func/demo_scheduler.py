@@ -105,9 +105,14 @@ def get_cold_start_plan(
         "resolution": "480p",
         "fps": 30,
         "nskip": 0,
-        "ntracking": 5,
+        # "ntracking": 5,
         "encoder": "H264",
     }
+
+    # 应用层紧耦合的调度...
+    assert dag["flow"][0] == dag["generator"]
+    if dag["generator"] == "ClipGenerator":
+        cold_video_conf["ntracking"] = 5
 
     cold_flow_mapping = dict()
 

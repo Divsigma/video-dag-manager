@@ -9,21 +9,36 @@ from werkzeug.serving import WSGIRequestHandler
 # 单例：接收输入的主线程
 WSGIRequestHandler.protocol_version = "HTTP/1.1"
 app = flask.Flask(__name__)
-serv_q = {
-    "face_detection": queue.Queue(10),
-    "face_alignment": queue.Queue(10)
-}
+
 
 # 模拟数据库
 registered_services = [
     "face_detection",
     "face_alignment",
-    "car_detection"
+    "car_detection",
+    "helmet_detection"
 ]
+
+cluster_info = {
+    "127.0.0.1": {
+        "node_role": "cloud",
+        "n_cpu": 8,
+        "cpu_ratio": 2.5,
+        "mem": 4096 * 32,
+        "mem_ratio": 0.3
+    },
+    "127.0.0.2": {
+        "node_role": "edge",
+        "n_cpu": 4,
+        "cpu_ratio": 2.5,
+        "mem": 4096,
+        "mem_ratio": 0.3
+    }
+}
 
 resource_info = {
     "host": {
-        "192.168.56.102": {
+        "127.0.0.1": {
             "face_detection": {
                 "n_process": 1,
                 "cpu_ratio": 0.8,
@@ -37,7 +52,7 @@ resource_info = {
         }
     },
     "edge": {
-        "192.168.56.102": {
+        "127.0.0.1": {
             "face_detection": {
                 "n_process": 1,
                 "cpu_ratio": 0.8,
@@ -51,7 +66,7 @@ resource_info = {
         }
     },
     "cloud": {
-        "192.168.56.102": {
+        "127.0.0.1": {
             "face_detection": {
                 "n_process": 1,
                 "cpu_ratio": 0.8,
@@ -63,40 +78,6 @@ resource_info = {
                 "mem_ratio": 0.4
             }
         }        
-    }
-}
-
-services_info = {
-    "face_detection": {
-        "127.0.0.1:5500": {
-            "cpu": 1,
-            "mem": 1,
-            "url": "http://127.0.0.1:5500/execute_task/face_detection"
-        }
-    },
-    "face_alignment": {
-        "127.0.0.1:xxxx": {
-            "cpu": 1,
-            "mem": 1,
-            "url": "http://127.0.0.1:5500/execute_task/face_alignment"
-        },
-        "127.0.0.1:5500": {
-            "cpu": 2,
-            "mem": 2,
-            "url": "http://127.0.0.1:5500/execute_task/face_alignment"
-        }
-    },
-    "car_detection": {
-        "127.0.0.1:5500": {
-            "cpu": 1,
-            "mem": 1,
-            "url": "http://127.0.0.1:5500/execute_task/car_detection"
-        }
-    },
-    "helmet_detection": {
-        "127.0.0.1:5500": {
-            
-        }
     }
 }
 
@@ -131,23 +112,19 @@ def cal(serv_name, input_ctx):
 
 @app.route("/get_service_list", methods=["GET"])
 def get_service_list_cbk():
-    return flask.jsonify(list(services_info.keys()))
+    return flask.jsonify(registered_services)
 
 @app.route("/get_resource_info", methods=["GET"])
 def get_resource_info_cbk():
     return flask.jsonify(resource_info)
 
-@app.route("/get_execute_url/<serv_name>", methods=["GET"])
-def get_service_dict(serv_name):
-    if serv_name not in services_info.keys():
-        return flask.Response("{'msg': serv_name '{}' not registered}".format(serv_name),
-                              status=500,
-                              mimetype="application/json")
-    return flask.jsonify(services_info[serv_name])
+@app.route("/get_cluster_info", methods=["GET"])
+def get_cluster_info_cbk():
+    return flask.jsonify(cluster_info)
 
 @app.route("/execute_task/<serv_name>", methods=["POST"])
 def get_serv_cbk(serv_name):
-    if serv_name not in services_info.keys():
+    if serv_name not in registered_services:
         return flask.jsonify({"status": 1, "error": "unregistered services"})
     
     input_ctx = flask.request.json

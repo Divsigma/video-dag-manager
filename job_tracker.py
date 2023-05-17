@@ -1,6 +1,7 @@
 import cv2
 import numpy
 import flask
+import flask.logging
 import flask_cors
 import random
 import requests
@@ -14,6 +15,7 @@ from werkzeug.serving import WSGIRequestHandler
 
 import field_codec_utils
 from logging_utils import root_logger
+import logging_utils
 
 # SingleFrameGenerator的数据生成函数
 def sfg_get_next_init_task(video_cap=None, video_conf=None):
@@ -487,6 +489,7 @@ class Job():
             self.added_plan_result["delay"][taskname] = sum_delay / (self.n_exec * nframe_per_exec * 1.0)
 
         self.plan_result = self.added_plan_result
+        root_logger.info("calculated plan_result: {}".format(self.plan_result))
 
         # 重置调度状态
         # self.flow_mapping = None
@@ -550,7 +553,7 @@ class Job():
 
         try:
             res = r.json()
-            root_logger.info("got service result: {}".format(res.keys()))
+            root_logger.info("got service result: {}, (delta_t={})".format(res.keys(), ed_time - st_time))
             # 记录任务的执行结果
             self.store_task_result(taskname, r.json())
             # 累计执行计划的执行结果
@@ -642,8 +645,10 @@ manager = Manager()
 # 单例变量：后台web线程
 flask.Flask.logger_name = "listlogger"
 WSGIRequestHandler.protocol_version = "HTTP/1.1"
-app = flask.Flask(__name__)
-flask_cors.CORS(app)
+user_app = flask.Flask(__name__)
+tracker_app = flask.Flask(__name__)
+flask_cors.CORS(user_app)
+flask_cors.CORS(tracker_app)
 
 # 模拟数据库
 # 单例变量：接入到当前节点的节点信息
@@ -653,7 +658,7 @@ node_status = dict()
 
 
 # 外部接口：从云端接受用户提交的job参数，包括指定的DAG、数据来源，将/node/submit_job的注册结果返回
-@app.route("/user/submit_job", methods=["POST"])
+@user_app.route("/user/submit_job", methods=["POST"])
 @flask_cors.cross_origin()
 def user_submit_job_cbk():
     # 获取用户针对视频流提交的job，转发到对应边端
@@ -688,15 +693,21 @@ def user_submit_job_cbk():
     return flask.jsonify(r.text)
 
 # 外部接口：从云端获取job执行结果，需要传入job_uid
-@app.route("/user/sync_job_result/<job_uid>", methods=["GET"])
+@user_app.route("/user/sync_job_result/<job_uid>", methods=["GET"])
 @flask_cors.cross_origin()
 def user_sync_job_result_cbk(job_uid):
     job_result = manager.get_job_result(job_uid=job_uid)
     return flask.jsonify({"status": 0,
                           "result": job_result})
 
+# 外部接口：获取当前节点所知的所有节点信息
+@user_app.route("/user/get_all_status")
+@flask_cors.cross_origin()
+def user_get_all_status_cbk():
+    return flask.jsonify({"status": 0, "data": node_status})
+
 # 内部接口：节点间同步job的执行结果到本地
-@app.route("/node/sync_job_result", methods=["POST"])
+@tracker_app.route("/node/sync_job_result", methods=["POST"])
 @flask_cors.cross_origin()
 def node_sync_job_result_cbk():
     para = flask.request.json
@@ -709,7 +720,7 @@ def node_sync_job_result_cbk():
     return flask.jsonify({"status": 200})
 
 # 内部接口：接受其他节点传入的job初始化参数，在本地生成可以执行的job
-@app.route("/node/submit_job", methods=["POST"])
+@tracker_app.route("/node/submit_job", methods=["POST"])
 @flask_cors.cross_origin()
 def node_submit_job_cbk():
     # 获取产生job的初始化参数
@@ -728,7 +739,7 @@ def node_submit_job_cbk():
                           "job_uid": para["unique_job_id"]})
 
 # 内部接口：其他节点接入当前节点时，需要上传节点状态
-@app.route("/node/update_status", methods=["POST"])
+@tracker_app.route("/node/update_status", methods=["POST"])
 @flask_cors.cross_origin()
 def node_update_status_cbk():
     para = flask.request.json
@@ -751,7 +762,7 @@ def node_update_status_cbk():
     return flask.jsonify({"status": 0, "node_addr": node_addr})
 
 # 工作节点内部接口：接受调度计划更新
-@app.route("/node/update_plan", methods=["POST"])
+@tracker_app.route("/node/update_plan", methods=["POST"])
 @flask_cors.cross_origin()
 def node_update_plan_cbk():
     para = flask.request.json
@@ -763,7 +774,7 @@ def node_update_plan_cbk():
     return flask.jsonify({"status": 0, "msg": "updated (manager.update_job_plan)"})
 
 # 云端内部接口：接受调度请求
-@app.route("/node/get_plan", methods=["POST"])
+@tracker_app.route("/node/get_plan", methods=["POST"])
 @flask_cors.cross_origin()
 def node_get_plan_cbk():
     para = flask.request.json
@@ -773,15 +784,13 @@ def node_get_plan_cbk():
     
     return flask.jsonify({"status": 0, "msg": "accepted (put to unsched_job_q)"})
 
-# 内部接口：获取当前节点所知的所有节点信息
-@app.route("/node/get_all_status")
-@flask_cors.cross_origin()
-def node_get_all_status_cbk():
-    return flask.jsonify({"status": 0, "data": node_status})
 
 
-def start_dag_listener(serv_port=5000):
-    app.run(host="0.0.0.0", port=serv_port)
+def start_user_listener(serv_port=5000):
+    user_app.run(host="0.0.0.0", port=serv_port)
+
+def start_tracker_listener(serv_port=5001):
+    tracker_app.run(host="0.0.0.0", port=serv_port)
     # app.run(port=serv_port)
     # app.run(host="*", port=serv_port)
 
@@ -862,31 +871,56 @@ if __name__ == "__main__":
     parser.add_argument('--side', dest='side', type=str, required=True)
     parser.add_argument('--mode', dest='mode', type=str, required=True)
     parser.add_argument('--cloud_ip', dest='cloud_ip', type=str, default='127.0.0.1')
-    parser.add_argument('--cloud_port', dest='cloud_port', type=int, default=5000)
-    parser.add_argument('--local_port', dest='local_port', type=int, default=5001)
+    parser.add_argument('--user_port', dest='user_port', type=int, default=5000)
+    parser.add_argument('--tracker_port', dest='tracker_port', type=int, default=5001)
+    parser.add_argument('--pseudo_tracker_port', dest='pseudo_tracker_port', type=int, default=5002)
     parser.add_argument('--serv_cloud_addr', dest='serv_cloud_addr', type=str, default='127.0.0.1:5500')
     args = parser.parse_args()
 
     is_cloud = True if args.side == 'c' else False
     if is_cloud:
-        # 云端Manager的背景线程：与工作节点Manager通信，下发job和调度策略；与用户通信，用户提交任务（5000端口）
-        threading.Thread(target=start_dag_listener,
-                        args=(args.cloud_port,),
+        # 云端Manager的背景线程：与用户通信，用户提交任务（5000端口）
+        threading.Thread(target=start_user_listener,
+                        args=(args.user_port,),
+                        name="UserFlask",
+                        daemon=True).start()
+        
+        # 云端Manager的背景线程：与工作节点Manager通信，下发job和调度策略（5001端口）
+        threading.Thread(target=start_tracker_listener,
+                        args=(args.tracker_port,),
+                        name="TrackerFlask",
                         daemon=True).start()
 
         time.sleep(1)
 
-    # 工作节点Manager的背景线程：与云端的Manager通信，同步job状态和调度策略（5001端口）
-    threading.Thread(target=start_dag_listener,
-                     args=(args.local_port,),
-                     daemon=True).start()
+    # 工作节点Manager的背景线程：与云端的Manager通信，同步job状态和调度策略（5001端口，伪分布式用5002）
+    is_pseudo = True if args.mode == 'pseudo' else False
+    if not is_cloud:
+        assert not is_pseudo
+        threading.Thread(target=start_tracker_listener,
+                            args=(args.tracker_port,),
+                            name="TrackerFlask",
+                            daemon=True).start()
+    elif is_pseudo:
+        threading.Thread(target=start_tracker_listener,
+                    args=(args.pseudo_tracker_port,),
+                    name="TrackerFlask",
+                    daemon=True).start()
+    else:
+        assert False
 
-    manager.set_cloud_addr(cloud_ip=args.cloud_ip, cloud_port=args.cloud_port)
-    manager.join_cloud(local_port=args.local_port)
+    # 工作节点接入云端
+    manager.set_cloud_addr(cloud_ip=args.cloud_ip, cloud_port=args.tracker_port)
+    if not is_cloud:
+        manager.join_cloud(local_port=args.tracker_port)
+    elif is_pseudo:
+        manager.join_cloud(local_port=args.pseudo_tracker_port)
+    else:
+        assert False
+    root_logger.info("joined to cloud")
     manager.set_service_cloud_addr(addr=args.serv_cloud_addr)
 
     # 云端的Scheduler线程/进程：从云端Manager获取未调度作业，计算调度策略，将策略下发工作节点Manager
-    is_pseudo = True if args.mode == 'pseudo' else False
     if is_cloud:
         unsched_job_q = queue.Queue(10)
         exec_job_q= queue.Queue(10)
@@ -895,6 +929,7 @@ if __name__ == "__main__":
         if is_pseudo:
             threading.Thread(target=cloud_scheduler_loop,
                             args=(manager,),
+                            name="CloudScheduler",
                             daemon=True).start()
         else:
             cloud_scheduler_loop(manager)
