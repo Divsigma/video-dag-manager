@@ -17,6 +17,25 @@ import field_codec_utils
 from logging_utils import root_logger
 import logging_utils
 
+resolution_wh = {
+    "360p": {
+        "w": 480,
+        "h": 360
+    },
+    "480p": {
+        "w": 640,
+        "h": 480
+    },
+    "720p": {
+        "w": 1280,
+        "h": 720
+    },
+    "1080p": {
+        "w": 1920,
+        "h": 1080
+    }
+}
+
 # SingleFrameGenerator的数据生成函数
 def sfg_get_next_init_task(video_cap=None, video_conf=None):
     # # 模拟产生数据
@@ -30,15 +49,21 @@ def sfg_get_next_init_task(video_cap=None, video_conf=None):
 
     assert video_cap
 
+    global resolution_wh
+
     # 从视频流读取一帧
     ret, frame = video_cap.read()
     assert ret
 
+    # 根据video_conf['resolution']调整大小
+    frame = cv2.resize(frame, [
+        resolution_wh[video_conf['resolution']]['w'],
+        resolution_wh[video_conf['resolution']]['h']
+    ])
+
     input_ctx = dict()
     # input_ctx['image'] = (video_cap.get(cv2.CAP_PROP_POS_FRAMES), numpy.array(frame).shape)
     st_time = time.time()
-    input_ctx['image'] = field_codec_utils.encode_image(frame)
-    input_ctx['image'] = field_codec_utils.decode_image(input_ctx['image'])
     input_ctx['image'] = field_codec_utils.encode_image(frame)
     ed_time = time.time()
     root_logger.info("time consumed in encode-decode: {}".format(ed_time - st_time))
@@ -60,9 +85,17 @@ def clpg_get_next_init_task(video_cap=None, video_conf=None):
     n = 5
     if 'ntracking' in video_conf.keys():
         n = video_conf['ntracking']
+
     for i in range(n):
         ret, frame = video_cap.read()
         assert ret
+        
+        # 根据video_conf['resolution']调整大小
+        frame = cv2.resize(frame, [
+            resolution_wh[video_conf['resolution']]['w'],
+            resolution_wh[video_conf['resolution']]['h']
+        ])
+        
         input_ctx['clip'].append(field_codec_utils.encode_image(frame))
 
     ed_time = time.time()

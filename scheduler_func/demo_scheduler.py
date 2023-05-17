@@ -102,11 +102,11 @@ def get_cold_start_plan(
     global prev_video_conf, prev_flow_mapping
 
     cold_video_conf = {
-        "resolution": "480p",
-        "fps": 30,
+        "resolution": "1080p",
+        "fps": 60,
         "nskip": 0,
         # "ntracking": 5,
-        "encoder": "H264",
+        "encoder": "JPEG",
     }
 
     # 应用层紧耦合的调度...
