@@ -10,10 +10,6 @@ from werkzeug.serving import WSGIRequestHandler
 WSGIRequestHandler.protocol_version = "HTTP/1.1"
 app = flask.Flask(__name__)
 
-import field_codec_utils
-import services.headup_detect.face_detection
-import services.headup_detect.face_alignment_cnn
-
 # 模拟数据库
 services_args = {
     "face_detection": {
@@ -30,15 +26,25 @@ services_args = {
         'lite_version': True,
         'model_path': 'models/hopenet_lite_6MB.pkl',
         'batch_size': 1,
-        'device': 'cuda:0'
-        # 'device': 'cpu'
+        # 'device': 'cuda:0'
+        'device': 'cpu'
+    },
+    "car_detection": {
+        'weights': 'yolov5s.pt',
+        # 'device': 'cuda:0'
+        'device': 'cpu'
     }
 }
+
+import field_codec_utils
+import services.headup_detect.face_detection
+import services.headup_detect.face_alignment_cnn
+import services.car_detection.car_detection
 
 registered_services = {
     "face_detection": services.headup_detect.face_detection.FaceDetection(services_args["face_detection"]),
     "face_alignment": services.headup_detect.face_alignment_cnn.FaceAlignmentCNN(services_args["face_alignment"]),
-    "car_detection": None,
+    "car_detection": services.car_detection.car_detection.CarDetection(services_args["car_detection"]),
     "helmet_detection": None
 }
 
@@ -121,6 +127,7 @@ def cal(serv_name, input_ctx):
         # output_ctx["bbox"] = [[1,1,3,3],[4,4,7,7],[13,15,30,30],[20,27,35,35]]
         # output_ctx["prob"] = [0.1,0.2,0.3,0.4]
         # time.sleep(1)
+    
     if serv_name == "face_alignment":
         assert "image" in input_ctx.keys()
         assert "bbox" in input_ctx.keys()
@@ -135,10 +142,17 @@ def cal(serv_name, input_ctx):
         #     [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4]
         # ]
         # time.sleep(0.5)
+    
     if serv_name == "car_detection":
         assert "image" in input_ctx.keys()
-        output_ctx["result"] = {'truck': 2, 'car': 6}
-        time.sleep(1)
+        # 解码
+        input_ctx["image"] = field_codec_utils.decode_image(input_ctx["image"])
+        # 执行
+        output_ctx = registered_services[serv_name](input_ctx)
+        
+        # output_ctx["result"] = {'truck': 2, 'car': 6}
+        # time.sleep(1)
+    
     if serv_name == "helmet_detection":
         assert "clip" in input_ctx.keys()
         output_ctx["clip_result"] = list()

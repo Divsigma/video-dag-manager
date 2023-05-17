@@ -155,7 +155,7 @@ class Manager():
         self.video_info_list = [
             {"id": 0, "type": "student in classroom", "url": "input/input.mov"},
             {"id": 1, "type": "people in meeting-room", "url": "input/input1.mp4"},
-            # {"id": 3, "type": "traffic flow outdoor", "url": "input/traffic-720p.mp4"}
+            {"id": 3, "type": "traffic flow outdoor", "url": "input/traffic-720p.mp4"}
         ]
 
         # 模拟数据库：记录下发到本地的job以及该job的执行结果
@@ -183,6 +183,11 @@ class Manager():
     def get_cloud_addr(self):
         return self.cloud_addr
     
+    def get_video_info_by_id(self, video_id=id):
+        for info in self.video_info_list:
+            if info["id"] == video_id:
+                return info
+        return None
     
     def get_available_service_list(self):
         r = self.sess.get(url="http://{}/get_service_list".format(self.service_cloud_addr))
@@ -294,7 +299,7 @@ class Manager():
         job = Job(job_uid=job_uid,
                   dag_generator=dag_generator, dag_flow=dag_flow, dag_input=dag_input,
                   video_id=video_id,
-                  video_url=self.video_info_list[video_id]["url"],
+                  video_url=self.get_video_info_by_id(video_id)["url"],
                   generator_func=Manager.generator_func[dag_generator],
                   is_stream=True)
         job.set_manager(self)
