@@ -98,7 +98,7 @@ $ python3 job_tracker.py --side=c --mode=pseudo 2>&1 | tee job_tracker.log
 }
 
 描述：从云端接收用户提交的任务约束
-接口：POST :5000/user/submit_job_constraint
+接口：POST :5000/user/submit_job_user_constraint
 请求数据：
 {
     "job_uid": "GLOBAL_ID_1.SUB_ID",
