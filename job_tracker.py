@@ -280,6 +280,7 @@ class Manager():
         sel_job = None
         n_executable_job = 0
         for job in self.job_dict.values():
+            root_logger.info("job-{} status={}".format(job.get_job_uid(), job.get_sched_state()))
             if job.get_sched_state() == Job.JOB_STATE_EXEC:
                 n_executable_job += 1
                 if random.randint(1, n_executable_job) == 1:
@@ -305,6 +306,7 @@ class Manager():
         job.set_manager(self)
         self.job_dict[job.get_job_uid()] = job
         self.post_reschedule_request(job)
+        root_logger.info("current job_dict={}".format(self.job_dict.keys()))
 
         # 本地调度（未使用）：将新任务放入待调度队列
         # self.unsched_job_q.put(job)
@@ -607,7 +609,7 @@ class Job():
             return True
 
         except Exception as e:
-            root_logger.error("caught exception: {}".format(e))
+            root_logger.error("caught exception: {}".format(e), exc_info=True)
             root_logger.error("got serv result: {}".format(r.text))
             return False
 
@@ -666,6 +668,7 @@ class Job():
             ))
 
             # 根据flow_mapping，执行task，并记录中间结果
+            root_logger.info("flow_mapping ={}".format(self.flow_mapping))            
             choice = self.flow_mapping[taskname]
             # execute_url_dict = self.manager.get_service_dict(taskname)
             # root_logger.info("get execute_url_dict {}".format(execute_url_dict))
@@ -852,7 +855,7 @@ def cloud_scheduler_loop(manager=None):
         try:
             sched_req = unsched_job_q.get()
             assert isinstance(sched_req, dict)
-            root_logger.error("got one sched_req from unsched_job_q: {}".format(sched_req))
+            root_logger.info("got one sched_req from unsched_job_q: {}".format(sched_req))
 
             job_uid = sched_req['job_uid']
             node_addr = manager.get_node_addr_by_job_uid(job_uid)
@@ -861,6 +864,7 @@ def cloud_scheduler_loop(manager=None):
             r = sess.get(url="http://{}/get_resource_info".format(manager.service_cloud_addr))
             conf, flow_mapping = scheduler_func.demo_scheduler.scheduler(
                 # flow=job.get_dag_flow(),
+                job_uid=job_uid,
                 dag=sched_req['dag'],
                 resource_info=r.json(),
                 last_plan_res=sched_req['last_plan_result'],
@@ -869,9 +873,10 @@ def cloud_scheduler_loop(manager=None):
 
             r = sess.post(url="http://{}/node/update_plan".format(node_addr),
                           json={"job_uid": job_uid, "video_conf": conf, "flow_mapping": flow_mapping})
-
+        # except AssertionError as e:
+        #     root_logger.error("caught assertion, msg={}".format(e), exc_info=True)
         except Exception as e:
-            root_logger.error("caught exception, type={}, msg={}".format(repr(e), e))
+            root_logger.error("caught exception, type={}, msg={}".format(repr(e), e), exc_info=True)
         
 
 # 本地调度器主循环（未使用）：从unsched_job_q中取一未调度任务，生成调度计划，修改Job状态，放入待执行队列
@@ -897,7 +902,7 @@ def local_scheduler_loop(unsched_job_q=None, exec_job_q=None, serv_cloud_addr="1
                 dag=job.get_dag(),
                 resource_info=r.json(),
                 last_plan_res=last_plan_result,
-                user_constraint={ "delay": [0, 0.1],  "acc_level": 5 }
+                user_constraint={ "delay": [0, 0.3],  "acc_level": 5 }
             )
             job.set_plan(video_conf=conf, flow_mapping=flow_mapping)
 
@@ -998,9 +1003,9 @@ if __name__ == "__main__":
         try:
             job.forward_one_step()
         except Exception as e:
+            root_logger.error("caught exception, type={}, msg={}".format(repr(e), e), exc_info=True)
+            root_logger.error("set2done and removing job: {}".format(job))
             job.set2done(msg=[repr(e), e])
-            root_logger.error("caught exception, type={}, msg={}".format(repr(e), e))
-            root_logger.warning("remove job: {}".format(job))
             manager.remove_job(job)
         
         if job.one_loop_is_end():

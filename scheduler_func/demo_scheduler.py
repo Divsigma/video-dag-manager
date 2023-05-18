@@ -1,37 +1,22 @@
 from logging_utils import root_logger
 
-prev_video_conf = None
-# prev_video_conf = {
-#     "resolution": "480p",
-#     "fps": 30,
-#     "nskip": 5,
-#     "encoder": "H264",
-# }
+prev_video_conf = dict()
 
-prev_flow_mapping = None
-# prev_flow_mapping = {
-#     "face_detection": {
-#         "model_id": 0,
-#         "node_role": "host",
-#         "node_ip": "192.168.56.102"
-#     },
-#     "face_alignment": {
-#         "model_id": 0,
-#         "node_role": "host",
-#         "node_ip": "192.168.56.102"
-#     }
-# }
+prev_flow_mapping = dict()
 
 def get_next_exec_plan(
+    job_uid=None,
     dag=None,
     resource_info=None,
     user_constraint=None,
     faster=True
 ):
+    assert job_uid, "should provide job_uid"
+
     global prev_video_conf, prev_flow_mapping
 
-    next_video_conf = prev_video_conf
-    next_flow_mapping = prev_flow_mapping
+    next_video_conf = prev_video_conf[job_uid]
+    next_flow_mapping = prev_flow_mapping[job_uid]
 
     # 枚举策略，选出提速最快的方案。【变量离散化，每次只改变一个维度】。策略变量：
     # 视频流配置变量=[处理时长，帧率，跳帧率，像素点个数]，记作[t, fps, skpps, npxpf]
@@ -47,7 +32,7 @@ def get_next_exec_plan(
 
     # 仅支持pipeline
     flow = dag["flow"]
-    assert isinstance(flow, list)
+    assert isinstance(flow, list), "flow not list"
     flow_input = dag["input"]
     input_deli = dag["input_deliminator"]
 
@@ -89,28 +74,31 @@ def get_next_exec_plan(
                     next_flow_mapping[taskname]["node_ip"] = list(resource_info["host"].keys())[0]
                     break
 
-    prev_video_conf = next_video_conf
-    prev_flow_mapping = next_flow_mapping
-    return prev_video_conf, prev_flow_mapping
+    prev_video_conf[job_uid] = next_video_conf
+    prev_flow_mapping[job_uid] = next_flow_mapping
+    return prev_video_conf[job_uid], prev_flow_mapping[job_uid]
 
 def get_cold_start_plan(
+    job_uid=None,
     dag=None,
     resource_info=None,
     user_constraint=None,
 ):
-    
+    assert job_uid, "should provide job_uid"
+
     global prev_video_conf, prev_flow_mapping
 
+    # 时延优先策略：算量最小，算力最大
     cold_video_conf = {
-        "resolution": "1080p",
-        "fps": 60,
+        "resolution": "360p",
+        "fps": 24,
         "nskip": 0,
         # "ntracking": 5,
         "encoder": "JPEG",
     }
 
     # 应用层紧耦合的调度...
-    assert dag["flow"][0] == dag["generator"]
+    assert dag["flow"][0] == dag["generator"], "first element of dag['flow'] not generator"
     if dag["generator"] == "ClipGenerator":
         cold_video_conf["ntracking"] = 5
 
@@ -124,19 +112,22 @@ def get_cold_start_plan(
                 "node_ip": list(resource_info["host"].keys())[0]
             }
 
-    prev_video_conf = cold_video_conf
-    prev_flow_mapping = cold_flow_mapping
+    prev_video_conf[job_uid] = cold_video_conf
+    prev_flow_mapping[job_uid] = cold_flow_mapping
 
-    return prev_video_conf, prev_flow_mapping
+    return prev_video_conf[job_uid], prev_flow_mapping[job_uid]
 
 def scheduler(
+    job_uid=None,
     dag=None,
     resource_info=None, 
     last_plan_res=None,
     user_constraint=None,
 ):
     
-    root_logger.info("last_plan_res=\n{}".format(last_plan_res))
+    assert job_uid, "should provide job_uid for scheduler to get prev_plan of job"
+
+    root_logger.info("scheduling for job_uid-{}, last_plan_res=\n{}".format(job_uid, last_plan_res))
 
     # ---- 若无负反馈结果，则进行冷启动 ----
     if not last_plan_res:
@@ -145,12 +136,20 @@ def scheduler(
         # 期望：根据资源情况决定一个合理的配置，以便负反馈快速收敛到稳定方案
         root_logger.info("to get COLD start executation plan")
         return get_cold_start_plan(
+            job_uid=job_uid,
             dag=dag,
             resource_info=resource_info,
             user_constraint=user_constraint
         )
     
     # ---- 若有负反馈结果，则进行负反馈调节 ----
+    global prev_video_conf, prev_flow_mapping
+
+    assert job_uid in prev_video_conf, \
+        "job_uid not in prev_video_conf(keys={})".format(prev_video_conf.keys())
+    assert job_uid in prev_flow_mapping, \
+        "job_uid not in prev_video_conf(keys={})".format(prev_flow_mapping.keys())
+
     video_conf = None
     flow_mapping = None
 
@@ -166,6 +165,7 @@ def scheduler(
         # 上次调度时延 > 用户约束上界，提高处理速度
         root_logger.info("to get FASTER executation plan")
         return get_next_exec_plan(
+            job_uid=job_uid,
             dag=dag,
             resource_info=resource_info,
             user_constraint=user_constraint,
@@ -175,12 +175,11 @@ def scheduler(
         # 降低处理速度
         root_logger.info("to get slower executation plan")
         return get_next_exec_plan(
+            job_uid=job_uid,
             dag=dag,
             resource_info=resource_info,
             user_constraint=user_constraint,
             faster=False
         )
-    
-    global prev_video_conf, prev_flow_mapping
 
-    return prev_video_conf, prev_flow_mapping
+    return prev_video_conf[job_uid], prev_flow_mapping[job_uid]
