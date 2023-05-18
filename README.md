@@ -34,6 +34,7 @@ Job状态主要有三类
 
 ```shell
 # 伪分布式：单机上，先启动service_demo（监听5500端口），后启动job_tracker（监听5000~5002端口）
+# 注意：在项目根目录下新建input/目录存放数据视频————input.mov、input1.mp4、traffic-720p.mp4
 $ python3 service_demo.py
 $ python3 job_tracker.py --side=c --mode=pseudo
 ```
