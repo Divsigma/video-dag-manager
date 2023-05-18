@@ -221,7 +221,9 @@ class Manager():
         new_id = "GLOBAL_ID_" + str(self.global_job_count)
         return new_id
     
-    # 云端/user/submit_job和云端调度器：争用node_status，维护job_uid和node关系
+    # 云端/user/submit_job：争用node_status，修改node_addr的job_uid和node关系
+    # 云端调度器需要根据job_uid找到节点，更新node_addr的任务调度策略：争用node_status，查询node_addr
+    # 云端/user/submit_job_constraint需要根据job_uid找到节点，更新node_addr的任务约束：争用node_status，查询node_addr
     def get_node_addr_by_job_uid(self, job_uid):
         for node_addr, info in node_status.items():
             assert "job_uid_list" in info
@@ -238,7 +240,7 @@ class Manager():
             "job_uid": job.get_job_uid(),
             "dag": job.get_dag(),
             "last_plan_result": job.get_plan_result(),
-            "user_constraint": { "delay": [0, 0.1],  "acc_level": 5 }
+            "user_constraint": job.get_user_constraint()
         }
         r = self.sess.post(url=url,
                            json=param)
@@ -255,7 +257,20 @@ class Manager():
         job.set_plan(video_conf=video_conf, flow_mapping=flow_mapping)
         job.start_exec()
 
-        root_logger.info("start exec job-{}".format(job.get_job_uid()))
+        root_logger.info("starting exec job-{}, updated plan".format(job.get_job_uid()))
+    # 工作节点更新用户约束
+    def update_job_user_constraint(self, job_uid, user_constraint):
+        assert job_uid in self.job_dict.keys()
+
+        job = self.job_dict[job_uid]
+        assert isinstance(job, Job)
+
+        job.set_user_constraint(user_constraint=user_constraint)
+        root_logger.info("set job-{} user_constraint to '{}'".format(
+            job.get_job_uid(),
+            job.get_user_constraint()
+        ))
+
 
     # 工作节点模拟CPU主循环的调度器
     def pop_one_exec_job(self):
@@ -388,6 +403,7 @@ class Job():
         self.flow_mapping = None
         self.video_conf = None
         self.plan_result = dict()
+        self.user_constraint = None
         # 调度状态机：当前调度状态
         self.n_exec = 0
         self.added_plan_result = dict()
@@ -457,6 +473,13 @@ class Job():
     
     def get_plan_result(self):
         return self.plan_result
+    
+    def set_user_constraint(self, user_constraint):
+        self.user_constraint = user_constraint
+        assert isinstance(user_constraint, dict)
+    
+    def get_user_constraint(self):
+        return self.user_constraint
     
 
     # -------------------------------
@@ -683,6 +706,10 @@ class Job():
 
 
 
+
+
+
+
 # 单例变量：主线程任务管理器，Manager
 manager = Manager()
 # 单例变量：后台web线程
@@ -693,9 +720,14 @@ tracker_app = flask.Flask(__name__)
 flask_cors.CORS(user_app)
 flask_cors.CORS(tracker_app)
 
-# 模拟数据库
+# 模拟云端数据库，维护接入节点及其已经submit的任务的job_uid。
+# 用户接口（/user/xxx）争用查询&修改，云端调度器（cloud_scheduler_loop）争用查询
 # 单例变量：接入到当前节点的节点信息
 node_status = dict()
+
+
+
+
 
 
 
@@ -706,7 +738,7 @@ node_status = dict()
 def user_submit_job_cbk():
     # 获取用户针对视频流提交的job，转发到对应边端
     para = flask.request.json
-    root_logger.info("{}".format(para))
+    root_logger.info("/user/submit_job got para={}".format(para))
     node_addr = para['node_addr']
     video_id = para['video_id']
 
@@ -735,6 +767,36 @@ def user_submit_job_cbk():
 
     return flask.jsonify(r.text)
 
+# 外部接口：从云端获取用户对job的约束，需要传入job_uid
+@user_app.route("/user/submit_job_user_constraint", methods=["POST"])
+@flask_cors.cross_origin()
+def user_submit_job_user_constraint_cbk():
+    para = flask.request.json
+    root_logger.info("/user/submit_job_user_constraint got para={}".format(para))
+    
+    # 后端校验？否则调度器可能抛出“无法比较str和float”
+    assert ("job_uid" in para) and ("user_constraint" in para)
+    assert ("delay" in para["user_constraint"])
+    assert (isinstance(para["user_constraint"]["delay"], int) or \
+            isinstance(para["user_constraint"]["delay"], float))
+
+    job_uid = para["job_uid"]
+    node_addr = manager.get_node_addr_by_job_uid(job_uid)
+    assert node_addr
+
+    new_req_para = dict()
+    new_req_para["job_uid"] = job_uid
+    new_req_para["user_constraint"] = para["user_constraint"]
+    r = manager.sess.post(url="http://{}/node/submit_job_user_constraint".format(node_addr),
+                          json=new_req_para)
+    
+    if r.ok:
+        # 提交成功则转发响应
+        root_logger.info("got ret: {}".format(r.json()))
+        return flask.jsonify(r.json())
+    
+    return flask.jsonify({"msg": "request to /node not ok", "text": r.text})
+
 # 外部接口：从云端获取job执行结果，需要传入job_uid
 @user_app.route("/user/sync_job_result/<job_uid>", methods=["GET"])
 @flask_cors.cross_origin()
@@ -748,6 +810,13 @@ def user_sync_job_result_cbk(job_uid):
 @flask_cors.cross_origin()
 def user_get_all_status_cbk():
     return flask.jsonify({"status": 0, "data": node_status})
+
+
+
+
+
+
+
 
 # 内部接口：节点间同步job的执行结果到本地
 @tracker_app.route("/node/sync_job_result", methods=["POST"])
@@ -781,7 +850,21 @@ def node_submit_job_cbk():
                           "msg": "submitted to manager from api: node/submit_job",
                           "job_uid": para["unique_job_id"]})
 
-# 内部接口：其他节点接入当前节点时，需要上传节点状态
+# 内部接口：接收云端下发的任务约束，包括job_uid，时延和精度
+@tracker_app.route("/node/submit_job_user_constraint", methods=["POST"])
+@flask_cors.cross_origin()
+def node_submit_job_user_constraint_cbk():
+    para = flask.request.json
+
+    manager.update_job_user_constraint(job_uid=para["job_uid"],
+                                       user_constraint=para["user_constraint"])
+    
+    return flask.jsonify({
+        "status": 0,
+        "msg": "node updated constraint (manager.update_job_user_constraint)"
+    })
+
+# 云端内部接口：其他节点接入当前节点时，需要上传节点状态
 @tracker_app.route("/node/update_status", methods=["POST"])
 @flask_cors.cross_origin()
 def node_update_status_cbk():
@@ -814,7 +897,7 @@ def node_update_plan_cbk():
     # 与工作节点模拟CPU执行的主循环竞争manager
     manager.update_job_plan(job_uid=para['job_uid'], video_conf=para['video_conf'], flow_mapping=para['flow_mapping'])
 
-    return flask.jsonify({"status": 0, "msg": "updated (manager.update_job_plan)"})
+    return flask.jsonify({"status": 0, "msg": "node updated plan (manager.update_job_plan)"})
 
 # 云端内部接口：接受调度请求
 @tracker_app.route("/node/get_plan", methods=["POST"])
@@ -826,6 +909,11 @@ def node_get_plan_cbk():
     manager.unsched_job_q.put(para)
     
     return flask.jsonify({"status": 0, "msg": "accepted (put to unsched_job_q)"})
+
+
+
+
+
 
 
 

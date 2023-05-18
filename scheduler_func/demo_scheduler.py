@@ -129,8 +129,9 @@ def scheduler(
 
     root_logger.info("scheduling for job_uid-{}, last_plan_res=\n{}".format(job_uid, last_plan_res))
 
-    # ---- 若无负反馈结果，则进行冷启动 ----
-    if not last_plan_res:
+    # ---- 若无负反馈结果或用户无约束，则进行冷启动 ----
+    # 当前方式：“时延优先”模式的冷启动（算量最低，算力未决策）
+    if not last_plan_res or not user_constraint:
         # 基于knowledge base给出一个方案？
         # 选择最高配置？
         # 期望：根据资源情况决定一个合理的配置，以便负反馈快速收敛到稳定方案
@@ -159,8 +160,12 @@ def scheduler(
     # 时延=各阶段（推理时延+传输时延）
     
     # 负反馈迭代，尽量将时延调整到用户指定的时延范围
-    delay_lb = user_constraint["delay"][0]
-    delay_ub = user_constraint["delay"][1]
+    # delay_lb = user_constraint["delay"][0]
+    # delay_ub = user_constraint["delay"][1]
+
+    delay_ub = user_constraint["delay"]
+    # delay_ub = float(user_constraint["delay"])
+    delay_lb = delay_ub
     if sum(last_plan_res["delay"].values()) > delay_ub:
         # 上次调度时延 > 用户约束上界，提高处理速度
         root_logger.info("to get FASTER executation plan")

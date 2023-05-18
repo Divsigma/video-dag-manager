@@ -37,6 +37,9 @@ Job状态主要有三类
 # 注意：在项目根目录下新建input/目录存放数据视频————input.mov、input1.mp4、traffic-720p.mp4
 $ python3 service_demo.py
 $ python3 job_tracker.py --side=c --mode=pseudo
+
+# 或使用如下命令，方便在文件中查询error日志
+$ python3 job_tracker.py --side=c --mode=pseudo 2>&1 | tee job_tracker.log
 ```
 
 ### （3）相关用户接口
@@ -91,6 +94,17 @@ $ python3 job_tracker.py --side=c --mode=pseudo
                 "prob": "face_detection.prob"
             }
         }
+    }
+}
+
+描述：从云端接收用户提交的任务约束
+接口：POST :5000/user/submit_job_constraint
+请求数据：
+{
+    "job_uid": "GLOBAL_ID_1.SUB_ID",
+    "user_constraint": {
+        "delay": 0.3,  // 时延，以秒为单位
+        "accuracy": 10,  // 精度等级，待定
     }
 }
 
