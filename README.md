@@ -32,6 +32,8 @@ Job状态主要有三类
 - （2）为了运行预加载模型：pytorch==1.13.0，torchvision==0.14.0，对应版本的cuda和cudnn等
 - （3）其余依赖可依据报错安装
 
+伪分布式启动：
+
 ```shell
 # 伪分布式：单机上，先启动service_demo（监听5500端口），后启动job_tracker（监听5000~5002端口）
 # 注意：在项目根目录下新建input/目录存放数据视频————input.mov、input1.mp4、traffic-720p.mp4
@@ -40,6 +42,29 @@ $ python3 job_tracker.py --side=c --mode=pseudo
 
 # 或使用如下命令，方便在文件中查询error日志
 $ python3 job_tracker.py --side=c --mode=pseudo 2>&1 | tee job_tracker.log
+```
+
+分布式启动：
+
+```shell
+# 修改service_demo.py中的"cloud"的ip为边端可访问的云端ip
+cloud$ python3 service_demo.py
+# --side指定启动时所属角色（c和e分别代表云端和边端）
+# --mode指明启动模式（pseudo和cluster分别代表单机伪分布式和分布式）
+# --serv_cloud_addr指定请求计算服务的ip和端口
+cloud$ python3 job_tracker.py \
+               --side=c \
+               --mode=cluster \
+               --serv_cloud_addr=114.212.81.11:5500
+
+# service_demo.py的修改与cloud的文件保持一致
+edge$ python3 service_demo.py
+# --cloud_ip指明cluster启动模式下云端
+edge$ python3 job_tracker.py \
+              --side=e \
+              --mode=cluster \
+              --cloud_ip=114.212.81.11 \
+              --serv_cloud_addr=114.212.81.11:5500
 ```
 
 ### （3）服务接口示例
@@ -71,7 +96,6 @@ face_alignment
         "total": 8
     }
 }
-
 ```
 
 ### （4）相关用户接口
@@ -208,7 +232,6 @@ face_alignment
 描述：从特定节点获取渲染的图片结果
 接口：GET :5100/user/video/<job_uid>
 返回数据：流式jpeg图片响应，直接放入img标签可显示
-
 ```
 
 ### （5）相关内部接口
@@ -408,7 +431,6 @@ last_plan_res = {
         "delay"
     },
 }
-
 ```
 
 （5）用户约束
