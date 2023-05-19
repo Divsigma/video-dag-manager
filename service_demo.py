@@ -137,6 +137,9 @@ def cal(serv_name, input_ctx):
         # 执行
         output_ctx = registered_services[serv_name](input_ctx)
 
+        # 编码
+        if "image" in output_ctx:
+            output_ctx["image"] = field_codec_utils.encode_image(output_ctx["image"])
         # output_ctx["head_pose"] = [
         #     [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4],
         #     [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4], [0.1,0.2,0.4]
@@ -150,6 +153,9 @@ def cal(serv_name, input_ctx):
         # 执行
         output_ctx = registered_services[serv_name](input_ctx)
         
+        # 编码
+        if "image" in output_ctx:
+            output_ctx["image"] = field_codec_utils.encode_image(output_ctx["image"])
         # output_ctx["result"] = {'truck': 2, 'car': 6}
         # time.sleep(1)
     

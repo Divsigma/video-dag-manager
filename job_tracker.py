@@ -485,24 +485,32 @@ class Job():
     # -------------------------------
     # ---- Job最近一次执行后的结果 ----
 
-    def get_latest_loop_result(self):
-        taskname = self.prev_task_list[Manager.END_TASKNAME][0]
-        result = None
-        if taskname == 'car_detection':
-            task_result = self.get_task_result(taskname=taskname, field="result")
-            # result = {"n_loop": self.n_loop, "#cars": len(task_result)}
-            result = {"n_loop": self.n_loop}
-            result.update(task_result)
-        if taskname == 'face_alignment':
-            task_result = self.get_task_result(taskname=taskname, field="head_pose")
-            result = {"n_loop": self.n_loop, "#headup": len(task_result)}
-        if taskname == 'helmet_detection':
-            task_result = self.get_task_result(taskname=taskname, field="clip_result")
-            result = {"n_loop": self.n_loop, "#no_helmet": task_result[-1]['n_no_helmet']}
+    def get_latest_loop_count_result(self):
+        # taskname = self.prev_task_list[Manager.END_TASKNAME][0]
+        # result = None
+        # if taskname == 'car_detection':
+        #     task_result = self.get_task_result(taskname=taskname, field="result")
+        #     # result = {"n_loop": self.n_loop, "#cars": len(task_result)}
+        #     result = {"n_loop": self.n_loop}
+        #     result.update(task_result)
+        # if taskname == 'face_alignment':
+        #     task_result = self.get_task_result(taskname=taskname, field="head_pose")
+        #     result = {"n_loop": self.n_loop, "#headup": len(task_result)}
+        # if taskname == 'helmet_detection':
+        #     task_result = self.get_task_result(taskname=taskname, field="clip_result")
+        #     result = {"n_loop": self.n_loop, "#no_helmet": task_result[-1]['n_no_helmet']}
+        result = dict()
+        render_input_ctx = self.get_task_input(curr_taskname="Render")
+        result = {"n_loop": self.n_loop}
+        result.update(render_input_ctx["count"])
 
         return result
         # return self.get_task_result(taskname="SingleFrameGenerator",
         #                             field="image")
+
+    def get_latest_loop_image_bytestr_result(self):
+        render_input_ctx = self.get_task_input(curr_taskname="Render")
+        return render_input_ctx["image"]
 
     def should_skip_loop(self):
         if self.video_conf and "nskip" in self.video_conf:
@@ -757,15 +765,26 @@ def user_submit_job_cbk():
     new_req_para["unique_job_id"] = unique_job_id
     new_req_para.update(para)
     r = manager.sess.post(url="http://{}/node/submit_job".format(node_addr),
-                      json=new_req_para)
+                          json=new_req_para)
     # r = requests.post(url="http://{}/node/submit_job".format(node_addr),
     #                   json=new_req_para)
 
-    if r.ok:
-        root_logger.info("got ret: {}".format(r.json()))
-        return flask.jsonify(r.json())
+    # TODO：更新sidechan中<job_uid, node_addr>映射关系
+    cloud_ip = manager.get_cloud_addr().split(":")[0]
+    r_sidechan = manager.sess.post(url="http://{}:{}/user/update_node_addr".format(cloud_ip, 5100),
+                                   json={"job_uid": unique_job_id,
+                                         "node_addr": node_addr.split(":")[0] + ":5101"})
 
-    return flask.jsonify(r.text)
+    ret_dict = {"node_submit": 0, "sidechan": 0}
+
+    if r.ok:
+        root_logger.info("got /node/submit_job ret: {}".format(r.json()))
+        ret_dict.update(r.json())
+        ret_dict["node_submit"] = 1
+    if r_sidechan.ok:
+        ret_dict["sidechan"] = 1
+
+    return flask.jsonify(ret_dict)
 
 # 外部接口：从云端获取用户对job的约束，需要传入job_uid
 @user_app.route("/user/submit_job_user_constraint", methods=["POST"])
@@ -1042,8 +1061,9 @@ if __name__ == "__main__":
     else:
         assert False
 
-    # 工作节点接入云端
+    # 云端和工作节点设置云端node_addr
     manager.set_cloud_addr(cloud_ip=args.cloud_ip, cloud_port=args.tracker_port)
+    # 工作节点接入云端
     if not is_cloud:
         manager.join_cloud(local_port=args.tracker_port)
     elif is_pseudo:
@@ -1073,6 +1093,20 @@ if __name__ == "__main__":
         # mp.Process(target=scheduler_loop,
         #            args=(unsched_job_q, exec_job_q, args.serv_cloud_addr)).start()
 
+    # 云端渲染结果对外接口
+    if is_cloud:
+        import cloud_sidechan
+        video_serv_port = 5100
+        mp.Process(target=cloud_sidechan.init_and_start_video_proc,
+                   args=(video_serv_port,)).start()
+    # 工作节点渲染结果对内接口
+    if (is_pseudo and is_cloud) or (not is_pseudo and not is_cloud):
+        import edge_sidechan
+        video_q = mp.Queue(50)
+        video_serv_inter_port = 5101
+        mp.Process(target=edge_sidechan.init_and_start_video_proc,
+                   args=(video_q, video_serv_inter_port,)).start()
+
     # 工作节点Manager的执行线程（一个线程模拟一个CPU核）：
     # 一个确定了执行计划的Job相当于一个进程
     # 非抢占式选取job执行，每次选取后执行一个“拓扑步”
@@ -1100,13 +1134,29 @@ if __name__ == "__main__":
             # 当前job完成后，立刻汇报结果
             manager.submit_job_result(job_uid=job.get_job_uid(),
                                       job_result={
-                                          "appended_result": job.get_latest_loop_result(),
+                                          "appended_result": job.get_latest_loop_count_result(),
                                           "latest_result": {
                                                 "plan": job.get_plan(),
                                                 "plan_result": job.get_plan_result()   
                                           }
                                       },
                                       report2cloud=not is_cloud)
+            # 同时转储渲染结果（根据与service_demo.py的output约定，使用同一个工具类编解码图片来传输）
+            # cv2.imwrite('./output/{}.jpg'.format(time.time()), 
+            #             field_codec_utils.decode_image(job.get_latest_loop_image_str_result()))
+
+            # 根据与service_demo.py的output约定，使用同一个工具类编解码图片来传输。拿到的结果是jpg
+            video_q.put_nowait({
+                "job_uid": job.get_job_uid(),
+                "image_type": "jpeg",
+                # "image_bytes": bytes(job.get_latest_loop_image_bytestr_result())
+                "image_bytes": field_codec_utils.encode_image_tobytes(
+                    field_codec_utils.decode_image(
+                        job.get_latest_loop_image_bytestr_result()
+                    )
+                )
+            })
+            root_logger.info("put one to video_q")
             
             # 若当前job未完成对应数据流的处理，则重启当前job
             # NOTES：job的generator_func需要维护状态机，持续生成数据

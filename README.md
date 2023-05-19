@@ -42,7 +42,39 @@ $ python3 job_tracker.py --side=c --mode=pseudo
 $ python3 job_tracker.py --side=c --mode=pseudo 2>&1 | tee job_tracker.log
 ```
 
-### （3）相关用户接口
+### （3）服务接口示例
+
+```js
+face_detection
+输入
+{
+    "image": "\x003\x001..."
+}
+输出
+{
+    "bbox": [[1,2,3,4], [1,2,3,4], ...],
+    "prob": []
+}
+
+face_alignment
+输入
+{
+    "image": "\x003\x001...",
+    "bbox": [[1,2,3,4], [1,2,3,4], ...],
+    "prob": []
+}
+输出
+{
+    "image": "\x007\x008...",  // 渲染后的图片（用统一工具类field_codec_utils编码后的字节流字符串）
+    "count_result": {  // 可以显示的数值结果
+        "up": 6,
+        "total": 8
+    }
+}
+
+```
+
+### （4）相关用户接口
 
 ```js
 描述：获取接入到云端的节点信息
@@ -92,6 +124,13 @@ $ python3 job_tracker.py --side=c --mode=pseudo 2>&1 | tee job_tracker.log
                 "image": "SingleFrameGenerator.image",
                 "bbox": "face_detection.bbox",
                 "prob": "face_detection.prob"
+            },
+            // 需要加入"Render"字典，其包含"image"和"count"字段
+            // image: 编码后的 图片字节流 字符串（利用统一工具类field_codec_utils）
+            // count: 显示到页面上的数值信息
+            "Render": {
+                "image": "face_alignment.image",
+                "count": "face_alignment.count_result"
             }
         }
     }
@@ -164,9 +203,15 @@ $ python3 job_tracker.py --side=c --mode=pseudo 2>&1 | tee job_tracker.log
     },
     "status": 0
 }
+
+
+描述：从特定节点获取渲染的图片结果
+接口：GET :5100/user/video/<job_uid>
+返回数据：流式jpeg图片响应，直接放入img标签可显示
+
 ```
 
-### （4）相关内部接口
+### （5）相关内部接口
 
 ```js
 描述：指定节点提交任务

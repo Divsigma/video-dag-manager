@@ -18,6 +18,7 @@ from PIL import Image
 from . import hopenet
 from . import hopenetlite_v2
 from . import utils2
+from .utils import utils
 
 import os
 
@@ -145,12 +146,45 @@ class FaceAlignmentCNN:
 
         output_ctx = {}
         # output_ctx['image'] = image
-        output_ctx['bbox'] = bbox
-        
+        # output_ctx['bbox'] = bbox
+        # if use_gpu(self.__gpu):
+        #     output_ctx['head_pose'] = torch.Tensor(head_pose).cpu().tolist()
+        # else:
+        #     output_ctx['head_pose'] = np.array(head_pose, dtype=np.float32).tolist()
+
         if use_gpu(self.__gpu):
-            output_ctx['head_pose'] = torch.Tensor(head_pose).cpu().tolist()
+            head_pose = torch.Tensor(head_pose).cpu().tolist()
         else:
-            output_ctx['head_pose'] = np.array(head_pose, dtype=np.float32).tolist()
+            head_pose = np.array(head_pose, dtype=np.float32).tolist()
+
+        # render output["image"]
+        axis, up, total, thres = [], 0, 0, -10
+
+        # render bbox
+        bbox = np.reshape(bbox, (-1, 4)).astype(int)
+        for i, box in enumerate(bbox):
+            total += 1
+            cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]),
+                            (255, 0, 0), 4)
+
+        # render head pose
+        for yaw, pitch, roll, tdx, tdy, size in head_pose:
+            if pitch > thres:
+                up += 1
+            ax = utils.draw_axis(image, yaw, pitch, roll, tdx=tdx, tdy=tdy, size=size)
+            axis.append(ax)
+        for ax in axis:
+            ax = [int(x) for x in ax]
+            cv2.line(image, (ax[0], ax[1]), (ax[2], ax[3]), (0, 0, 255), 3)
+            cv2.line(image, (ax[0], ax[1]), (ax[4], ax[5]), (0, 255, 0), 3)
+            cv2.line(image, (ax[0], ax[1]), (ax[6], ax[7]), (0, 255, 255), 2)
+
+        # render stats
+        cv2.putText(image, 'Up: {} Total: {}'.format(up, total), (50, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        output_ctx["image"] = image
+        output_ctx["count_result"] = {"up": up, "total": total}
 
         return output_ctx
 

@@ -176,9 +176,11 @@ class CarDetection:
                 ret_dict[cls_name] = 0
             ret_dict[cls_name] += 1
 
-        output_ctx['result'] = ret_dict
-        print(output_ctx)
-        
+        output_ctx['count_result'] = ret_dict
+        output_ctx['image'] = im0
+        print(output_ctx['count_result'])
+        # print(im0)
+
         return output_ctx
 
 if __name__ == '__main__':
