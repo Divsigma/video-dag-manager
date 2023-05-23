@@ -56,10 +56,10 @@ def sfg_get_next_init_task(video_cap=None, video_conf=None):
     assert ret
 
     # 根据video_conf['resolution']调整大小
-    frame = cv2.resize(frame, [
+    frame = cv2.resize(frame, (
         resolution_wh[video_conf['resolution']]['w'],
         resolution_wh[video_conf['resolution']]['h']
-    ])
+    ))
 
     input_ctx = dict()
     # input_ctx['image'] = (video_cap.get(cv2.CAP_PROP_POS_FRAMES), numpy.array(frame).shape)
@@ -91,10 +91,10 @@ def clpg_get_next_init_task(video_cap=None, video_conf=None):
         assert ret
         
         # 根据video_conf['resolution']调整大小
-        frame = cv2.resize(frame, [
+        frame = cv2.resize(frame, (
             resolution_wh[video_conf['resolution']]['w'],
             resolution_wh[video_conf['resolution']]['h']
-        ])
+        ))
         
         input_ctx['clip'].append(field_codec_utils.encode_image(frame))
 
@@ -972,6 +972,7 @@ def cloud_scheduler_loop(manager=None):
 
     while True:
         try:
+            root_logger.info("waiting for sched_req")
             sched_req = unsched_job_q.get()
             assert isinstance(sched_req, dict)
             root_logger.info("got one sched_req from unsched_job_q: {}".format(sched_req))
@@ -1071,7 +1072,8 @@ if __name__ == "__main__":
                     name="TrackerFlask",
                     daemon=True).start()
     else:
-        assert False
+        pass
+        # assert False
 
     # 云端和工作节点设置云端node_addr
     manager.set_cloud_addr(cloud_ip=args.cloud_ip, cloud_port=args.tracker_port)
@@ -1081,11 +1083,27 @@ if __name__ == "__main__":
     elif is_pseudo:
         manager.join_cloud(local_port=args.pseudo_tracker_port)
     else:
-        assert False
+        pass
+        # assert False
     root_logger.info("joined to cloud")
     manager.set_service_cloud_addr(addr=args.serv_cloud_addr)
 
-    # 云端的Scheduler线程/进程：从云端Manager获取未调度作业，计算调度策略，将策略下发工作节点Manager
+    # 云端渲染结果对外接口
+    if is_cloud:
+        import cloud_sidechan
+        video_serv_port = 5100
+        mp.Process(target=cloud_sidechan.init_and_start_video_proc,
+                   args=(video_serv_port,)).start()
+        time.sleep(2)
+    # 工作节点渲染结果对内接口
+    if (is_pseudo and is_cloud) or (not is_pseudo and not is_cloud):
+        import edge_sidechan
+        video_q = mp.Queue(50)
+        video_serv_inter_port = 5101
+        mp.Process(target=edge_sidechan.init_and_start_video_proc,
+                   args=(video_q, video_serv_inter_port,)).start()
+
+    # 云端的Scheduler线程/进程循环：从云端Manager获取未调度作业，计算调度策略，将策略下发工作节点Manager
     if is_cloud:
         unsched_job_q = queue.Queue(10)
         exec_job_q= queue.Queue(10)
@@ -1105,21 +1123,7 @@ if __name__ == "__main__":
         # mp.Process(target=scheduler_loop,
         #            args=(unsched_job_q, exec_job_q, args.serv_cloud_addr)).start()
 
-    # 云端渲染结果对外接口
-    if is_cloud:
-        import cloud_sidechan
-        video_serv_port = 5100
-        mp.Process(target=cloud_sidechan.init_and_start_video_proc,
-                   args=(video_serv_port,)).start()
-    # 工作节点渲染结果对内接口
-    if (is_pseudo and is_cloud) or (not is_pseudo and not is_cloud):
-        import edge_sidechan
-        video_q = mp.Queue(50)
-        video_serv_inter_port = 5101
-        mp.Process(target=edge_sidechan.init_and_start_video_proc,
-                   args=(video_q, video_serv_inter_port,)).start()
-
-    # 工作节点Manager的执行线程（一个线程模拟一个CPU核）：
+    # 工作节点Manager的执行线程循环（一个线程模拟一个CPU核）：
     # 一个确定了执行计划的Job相当于一个进程
     # 非抢占式选取job执行，每次选取后执行一个“拓扑步”
     while (is_pseudo and is_cloud) or (not is_pseudo and not is_cloud):
