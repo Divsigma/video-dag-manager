@@ -769,13 +769,23 @@ def user_submit_job_cbk():
     # r = requests.post(url="http://{}/node/submit_job".format(node_addr),
     #                   json=new_req_para)
 
+    # 更新任务约束
+    new_req_para = dict()
+    new_req_para["job_uid"] = unique_job_id
+    if "user_constraint" in para:
+        new_req_para["user_constraint"] = para["user_constraint"]
+    else:
+        new_req_para["user_constraint"] = {"delay": 0.8, "accuracy": 0.8}
+    r_constraint = manager.sess.post(url="http://{}/node/submit_job_user_constraint".format(node_addr),
+                                      json=new_req_para)
+
     # TODO：更新sidechan中<job_uid, node_addr>映射关系
     cloud_ip = manager.get_cloud_addr().split(":")[0]
     r_sidechan = manager.sess.post(url="http://{}:{}/user/update_node_addr".format(cloud_ip, 5100),
                                    json={"job_uid": unique_job_id,
                                          "node_addr": node_addr.split(":")[0] + ":5101"})
 
-    ret_dict = {"node_submit": 0, "sidechan": 0}
+    ret_dict = {"node_submit": 0, "constraint": 0, "sidechan": 0}
 
     if r.ok:
         root_logger.info("got /node/submit_job ret: {}".format(r.json()))
@@ -783,6 +793,8 @@ def user_submit_job_cbk():
         ret_dict["node_submit"] = 1
     if r_sidechan.ok:
         ret_dict["sidechan"] = 1
+    if r_constraint:
+        ret_dict['constraint'] = 1
 
     return flask.jsonify(ret_dict)
 

@@ -1,4 +1,6 @@
 from logging_utils import root_logger
+import pandas as pd
+import os
 
 prev_video_conf = dict()
 
@@ -37,7 +39,6 @@ def get_next_exec_plan(
     input_deli = dag["input_deliminator"]
 
     available_fps = [24, 30, 60, 120]
-    # available_npxpf = [480*360, 858*480, 1280*720, 1920*1080]
     available_resolution = ["360p", "480p", "720p", "1080p"]
 
     # 记用户时延要求[lb, ub]
@@ -78,6 +79,58 @@ def get_next_exec_plan(
     prev_flow_mapping[job_uid] = next_flow_mapping
     return prev_video_conf[job_uid], prev_flow_mapping[job_uid]
 
+def get_flow_map(dag=None, resource_info=None, offload_ptr=None):
+    cold_flow_mapping = dict()
+    flow = dag["flow"]
+
+    for idx in range(len(flow)):
+        taskname = flow[idx]
+        if taskname not in dag["generator"]:
+            if idx < offload_ptr:
+                cold_flow_mapping[taskname] = {
+                    "model_id": 0,
+                    "node_role": "host",
+                    "node_ip": list(resource_info["host"].keys())[0]
+                }
+            else:
+                cold_flow_mapping[taskname] = {
+                    "model_id": 0,
+                    "node_role": "cloud",
+                    "node_ip": list(resource_info["cloud"].keys())[0]
+                }
+    
+    return cold_flow_mapping
+
+def get_pred_delay(fps=None, resolution=None, flow_map=None):
+    sum_delay = 0.0
+    for taskname in flow_map:
+        pf_filename = 'profile/{}.pf'.format(taskname)
+        pf_table = None
+        if os.path.exists(pf_filename):
+            pf_table = pd.read_table(pf_filename, sep='\t', header=None,
+                                    names=['resolution', 'node_role', 'delay'])
+        else:
+            pf_table = pd.read_table('profile/face_detection.pf', sep='\t', header=None,
+                                    names=['resolution', 'node_role', 'delay'])
+        # root_logger.info(pf_table)
+        node_role = 'cloud' if flow_map[taskname]['node_role'] == 'cloud' else 'edge'
+        pf_table['node_role'] = pf_table['node_role'].astype(str)
+        matched_row = pf_table.loc[
+            (pf_table['node_role'] == node_role) & \
+            (pf_table['resolution'] == resolution)
+        ]
+        delay = matched_row['delay'].values[0]
+        root_logger.info('get profiler delay={} for taskname={} node_role={}'.format(
+            delay, taskname, flow_map[taskname]['node_role']
+        ))
+
+        sum_delay += delay
+    
+    root_logger.info('get sum_delay={}'.format(sum_delay))
+
+    return sum_delay
+    
+
 def get_cold_start_plan(
     job_uid=None,
     dag=None,
@@ -96,14 +149,7 @@ def get_cold_start_plan(
         # "ntracking": 5,
         "encoder": "JPEG",
     }
-
-    # 应用层紧耦合的调度...
-    assert dag["flow"][0] == dag["generator"], "first element of dag['flow'] not generator"
-    if dag["generator"] == "ClipGenerator":
-        cold_video_conf["ntracking"] = 5
-
     cold_flow_mapping = dict()
-
     for taskname in dag["flow"]:
         if taskname not in dag["generator"]:
             cold_flow_mapping[taskname] = {
@@ -111,6 +157,39 @@ def get_cold_start_plan(
                 "node_role": "host",
                 "node_ip": list(resource_info["host"].keys())[0]
             }
+
+
+    available_fps = [24, 30, 60, 120]
+    available_resolution = ["360p", "480p", "720p", "1080p"]
+
+    delay_ub = user_constraint["delay"]
+    # delay_ub = float(user_constraint["delay"])
+    delay_lb = delay_ub
+
+    # 枚举所有策略，根据knowledge base预测时延，找出符合时延要求的/时延最小的
+    min_delay = None
+    for fps in available_fps:
+        for resol in available_resolution:
+            # generator不能offload到云
+            assert dag["flow"][0] == dag["generator"], "first element of dag['flow'] not generator"
+            for offload_ptr in range(1, len(dag["flow"])):
+                flow_map = get_flow_map(dag=dag,
+                                        resource_info=resource_info, 
+                                        offload_ptr=offload_ptr)
+                delay = get_pred_delay(fps=fps,
+                                       resolution=resol,
+                                       flow_map=flow_map)
+                if not min_delay or min_delay > delay:
+                    cold_video_conf["resolution"] = resol
+                    cold_video_conf["fps"] = fps
+                    cold_flow_mapping = flow_map
+                    min_delay = delay
+
+
+    # 应用层紧耦合的调度...
+    assert dag["flow"][0] == dag["generator"], "first element of dag['flow'] not generator"
+    if dag["generator"] == "ClipGenerator":
+        cold_video_conf["ntracking"] = 5
 
     prev_video_conf[job_uid] = cold_video_conf
     prev_flow_mapping[job_uid] = cold_flow_mapping
@@ -135,7 +214,8 @@ def scheduler(
         # 基于knowledge base给出一个方案？
         # 选择最高配置？
         # 期望：根据资源情况决定一个合理的配置，以便负反馈快速收敛到稳定方案
-        root_logger.info("to get COLD start executation plan")
+        user_constraint = {"delay": 0.8}
+        root_logger.info("to get COLD start executation plan, set default delay=0.06")
         return get_cold_start_plan(
             job_uid=job_uid,
             dag=dag,
