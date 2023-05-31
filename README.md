@@ -131,32 +131,15 @@ face_alignment
 }
 
 描述：从云端接收用户提交的任务
-接口：POST :5000/user/submit_job
-请求数据：dag_input中用到的字段，需要与计算服务接口文档中返回数据的字段对应
-         使用的数据生成器的字段，需要与生成器接口文档中返回数据的字段对应
+接口：POST :5000/query/submit_query
+请求数据：
 {
     "node_addr": "192.168.56.102:7000",
     "video_id": 1,
-    "dag": {
-        "generator": "SingleFrameGenerator",
-        "flow": ["SingleFrameGenerator", "face_detection", "face_alignment"],
-        "input": {
-            "face_detection": {
-                "image": "SingleFrameGenerator.image"
-            },
-            "face_alignment": {
-                "image": "SingleFrameGenerator.image",
-                "bbox": "face_detection.bbox",
-                "prob": "face_detection.prob"
-            },
-            // 需要加入"Render"字典，其包含"image"和"count"字段
-            // image: 编码后的 图片字节流 字符串（利用统一工具类field_codec_utils）
-            // count: 显示到页面上的数值信息
-            "Render": {
-                "image": "face_alignment.image",
-                "count": "face_alignment.count_result"
-            }
-        }
+    "pipeline": ["face_detection", "face_alignment"],
+    "user_constraint": {
+        "delay": 0.8,
+        "accuracy": 0.9
     }
 }
 
