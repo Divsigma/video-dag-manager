@@ -48,7 +48,7 @@ class FaceDetection:
                                                         self.__args['candidate_size'] / 2,
                                                         self.__args['threshold'])
         output_ctx = {}
-        # output_ctx['image'] = image
+        output_ctx['image'] = image
         output_ctx['bbox'] = [boxes[i, :].numpy().tolist() for i in range(boxes.size(0))]
         output_ctx['prob'] = [probs[i].item() for i in range(probs.size(0))]
         return output_ctx

@@ -183,7 +183,7 @@ class FaceAlignmentCNN:
         cv2.putText(image, 'Up: {} Total: {}'.format(up, total), (50, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
-        output_ctx["image"] = image
+        # output_ctx["image"] = image
         output_ctx["count_result"] = {"up": up, "total": total}
 
         return output_ctx
