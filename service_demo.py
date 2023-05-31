@@ -124,6 +124,9 @@ def cal(serv_name, input_ctx):
         # 执行
         output_ctx = registered_services[serv_name](input_ctx)
         
+        # 编码
+        if "image" in output_ctx:
+            output_ctx["image"] = field_codec_utils.encode_image(output_ctx["image"])
         # output_ctx["bbox"] = [[1,1,3,3],[4,4,7,7],[13,15,30,30],[20,27,35,35]]
         # output_ctx["prob"] = [0.1,0.2,0.3,0.4]
         # time.sleep(1)

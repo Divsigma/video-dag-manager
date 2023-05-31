@@ -102,32 +102,25 @@ face_alignment
 
 ```js
 描述：获取接入到云端的节点信息
-接口：GET :5000/user/get_all_status
+接口：GET :5000/node/get_video_info
 返回结果
 {
-    "data": {
-        "192.168.56.102:7000": {
-            "video": {
-                "0": {
-                    "type": "traffic flow"
-                },
-                "1": {
-                    "type": "people indoor"
-                }
-            }
+    "192.168.56.102:7000": {
+        "0": {
+            "type": "traffic flow"
         },
-        "192.168.56.102:8000": {
-            "video": {
-                "0": {
-                    "type": "traffic flow"
-                },
-                "1": {
-                    "type": "people indoor"
-                }
-            }
+        "1": {
+            "type": "people indoor"
         }
     },
-    "status": 0
+    "192.168.56.102:8000": {
+        "0": {
+            "type": "traffic flow"
+        },
+        "1": {
+            "type": "people indoor"
+        }
+    }
 }
 
 描述：从云端接收用户提交的任务

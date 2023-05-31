@@ -1,5 +1,6 @@
 import cv2
 import numpy
+import math
 import flask
 import flask.logging
 import flask_cors
@@ -51,9 +52,18 @@ def sfg_get_next_init_task(video_cap=None, video_conf=None):
 
     global resolution_wh
 
-    # 从视频流读取一帧
-    ret, frame = video_cap.read()
-    assert ret
+    # 从视频流读取一帧，根据fps跳帧
+    video_fps = video_cap.get(cv2.CAP_PROP_FPS)
+    nread = 1
+    frame_id = 0
+    if video_fps > video_conf['fps']:
+        nread = math.ceil(video_fps / video_conf['fps'])
+    
+    while nread:
+        frame_id = video_cap.get(cv2.CAP_PROP_POS_FRAMES)
+        ret, frame = video_cap.read()
+        nread -= 1
+        assert ret
 
     # 根据video_conf['resolution']调整大小
     frame = cv2.resize(frame, (
@@ -73,7 +83,7 @@ def sfg_get_next_init_task(video_cap=None, video_conf=None):
     root_logger.warning(
         "only unsupport init task with one image frame as input")
 
-    return input_ctx
+    return frame_id, input_ctx
 
 class JobManager():
     # 保存执行结果的缓冲大小
@@ -155,20 +165,19 @@ class JobManager():
         root_logger.info("job_dict keys: {}".format(self.job_dict.keys()))
 
         n = 0
-        for job in self.job_dict:
+        for jid, job in self.job_dict.items():
             assert isinstance(job, Job)
             if job.get_state() == Job.JOB_STATE_READY:
-                n += 1
                 job.start_worker_loop()
-                root_logger.info("run job-{} in new thread".format(job.get_job_uid()))
+                root_logger.info("start to run job-{} in new thread".format(job.get_job_uid()))
+            if job.get_state() == Job.JOB_STATE_RUNNING:
+                n += 1
+
         
-        if n == 0:
-            root_logger.warning("no new job to start")
-        
-        root_logger.info("{} jobs running".format(len(self.job_dict)))
+        root_logger.info("{}/{} jobs running".format(n, len(self.job_dict)))
 
     # TODO：将Job的结果同步到query manager（本地不存放结果）
-    def submit_job_result(self, job_uid, job_result, report2qm=True):
+    def sync_job_result(self, job_uid, job_result, report2qm=True):
         # if job_uid not in self.job_result_dict:
         #     self.job_result_dict[job_uid] = {
         #         "appended_result": list(), "latest_result": dict()}
@@ -197,8 +206,9 @@ class JobManager():
 
 
 class Job():
-    JOB_STATE_READY = 0
-    JOB_STATE_RUNNING = 1
+    JOB_STATE_UNSCHED = 0
+    JOB_STATE_READY = 1
+    JOB_STATE_RUNNING = 2
 
     def __init__(self, job_uid, node_addr, video_id, pipeline, user_constraint):
         # job的全局唯一id
@@ -209,7 +219,7 @@ class Job():
         self.video_id = video_id
         self.pipeline = pipeline
         # 执行状态机
-        self.state = Job.JOB_STATE_READY
+        self.state = Job.JOB_STATE_UNSCHED
         self.worker_thread = None
         # 调度状态机：执行计划与历史计划的执行结果
         self.user_constraint = user_constraint
@@ -231,12 +241,15 @@ class Job():
     def get_job_uid(self):
         return self.job_uid
     
-    def get_job_state(self):
+    def get_state(self):
         return self.state
 
     # ---------------------------------------
     # ---- 执行计划与执行计划结果的相关函数 ----
     def set_plan(self, video_conf, flow_mapping):
+        if self.get_state() == Job.JOB_STATE_UNSCHED:
+            self.state = Job.JOB_STATE_READY
+
         self.flow_mapping = flow_mapping
         self.video_conf = video_conf
         assert isinstance(self.flow_mapping, dict)
@@ -265,9 +278,11 @@ class Job():
         # 0、初始化数据流来源（TODO：从缓存区读取）
         cap = cv2.VideoCapture(self.manager.get_video_info_by_id(self.video_id)['url'])
 
+        n = 0
+        prev_frame_id = 0
         while True:
             # 1、根据video_conf，获取本次循环的输入数据（TODO：从缓存区读取）
-            output_ctx = sfg_get_next_init_task(video_cap=cap, video_conf=self.video_conf)
+            frame_id, output_ctx = sfg_get_next_init_task(video_cap=cap, video_conf=self.video_conf)
             root_logger.info("done generator task, get_next_init_task({})".format(output_ctx.keys()))
             
             # 2、执行
@@ -297,8 +312,15 @@ class Job():
                                   output_ctx.keys(), ed_time - st_time))
                 plan_result['delay'][taskname] = ed_time - st_time
 
+            n += 1
+            output_ctx["frame_id"] = frame_id
+            output_ctx["n_loop"] = n
+            for taskname in plan_result['delay']:
+                plan_result['delay'][taskname] = plan_result['delay'][taskname] / ((frame_id - prev_frame_id + 1) * 1.0)
+            prev_frame_id = frame_id
+
             # 3、TODO：记录结果，并通过job manager同步结果到query manager
-            self.manager.submit_job_result(job_uid=self.get_job_uid(),
+            self.manager.sync_job_result(job_uid=self.get_job_uid(),
                                            job_result={
                                                "appended_result": output_ctx,
                                                "latest_result": {
@@ -317,8 +339,8 @@ class Job():
             return r.json()
 
         except Exception as e:
-            root_logger.error("caught exception: {}".format(e), exc_info=True)
             root_logger.error("got serv result: {}".format(r.text))
+            root_logger.error("caught exception: {}".format(e), exc_info=True)
             return None
 
 

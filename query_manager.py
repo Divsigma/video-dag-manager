@@ -53,8 +53,37 @@ class Query():
     
     def get_query_id(self):
         return self.query_id
+    
+    def update_result(self, new_result):
+        if not self.result:
+            self.result = {"appended_result": list(), "latest_result": dict()}
+        assert isinstance(self.result, dict)
+
+        for k, v in new_result.items():
+            assert k in self.result.keys()
+            if k == "appended_result":
+                # 仅保留最近一批结果（防止爆内存）
+                if len(self.result[k]) > QueryManager.LIST_BUFFER_SIZE_PER_QUERY:
+                    del self.result[k][0]
+                self.result[k].append(v)
+            else:
+                # 直接替换结果
+                assert isinstance(v, dict)
+                self.result[k].update(v)
+    
+    def get_last_plan_result(self):
+        if self.result and 'latest_result' in self.result:
+            if 'plan_result' in self.result['latest_result']:
+                return self.result['latest_result']['plan_result']
+        return None
+    
+    def get_result(self):
+        return self.result
 
 class QueryManager():
+    # 保存执行结果的缓冲大小
+    LIST_BUFFER_SIZE_PER_QUERY = 10
+
     def __init__(self):
         self.global_query_count = 0
         self.service_cloud_addr = None
@@ -93,26 +122,20 @@ class QueryManager():
         self.query_dict[query.get_query_id()] = query
         root_logger.info("current query_dict={}".format(self.query_dict.keys()))
 
-    def submit_query_result(self, query_id, new_result):
+    def sync_query_result(self, query_id, new_result):
         assert query_id in self.query_dict
 
         query = self.query_dict[query_id]
         assert isinstance(query, Query)
-        if not query.result:
-            query.result = {"appended_result": list(), "latest_result": dict()}
-        assert isinstance(query.result, dict)
+        query.update_result(new_result)
+    
+    def get_query_result(self, query_id):
+        assert query_id in self.query_dict
 
-        for k, v in new_result.items():
-            assert k in query.result.keys()
-            if k == "appended_result":
-                # 仅保留最近一批结果（防止爆内存）
-                if len(query.result[k]) > Query.LIST_BUFFER_SIZE:
-                    del query.result[k][0]
-                query.result[k].append(v)
-            else:
-                # 直接替换结果
-                assert isinstance(v, dict)
-                query.result[k].update(v)
+        query = self.query_dict[query_id]
+        assert isinstance(query, Query)
+        return query.get_result()
+
 
 
 
@@ -155,7 +178,7 @@ def user_submit_query_cbk():
     pipeline = para['pipeline']
     user_constraint = para['user_constraint']
 
-    if node_addr not in node_status:
+    if node_addr not in query_manager.video_info:
         return flask.jsonify({"status": 1, "error": "cannot found {}".format(node_addr)})
 
     # TODO：在云端注册任务实例，维护job执行结果、调度信息
@@ -179,7 +202,7 @@ def user_submit_query_cbk():
 
     return flask.jsonify({"status": 0,
                           "msg": "submitted to (cloud) manager from api: /user/submit_job",
-                          "job_uid": job_uid})
+                          "query_id": job_uid})
 
 # TODO：同步job的执行结果
 @query_app.route("/query/sync_result", methods=["POST"])
@@ -190,9 +213,19 @@ def query_sync_result_cbk():
     job_uid = para['job_uid']
     job_result = para['job_result']
 
-    query_manager.submit_query_result(query_id=job_uid, new_result=job_result)
+    query_manager.sync_query_result(query_id=job_uid, new_result=job_result)
 
     return flask.jsonify({"status": 500})
+
+@query_app.route("/query/get_result/<query_id>", methods=["GET"])
+@flask_cors.cross_origin()
+def query_get_result_cbk(query_id):
+    return flask.jsonify(query_manager.get_query_result(query_id))
+
+@query_app.route("/node/get_video_info", methods=["GET"])
+@flask_cors.cross_origin()
+def node_video_info():
+    return flask.jsonify(query_manager.video_info)
 
 # 接受边缘节点的视频流接入信息
 @query_app.route("/node/join", methods=["POST"])
@@ -241,12 +274,13 @@ def cloud_scheduler_loop(query_manager=None):
             resource_info = r.json()
             
             # 访问已注册的所有job实例，获取实例中保存的结果，生成调度策略
-            for query in query_manager.query_dict:
+            query_dict = query_manager.query_dict.copy()
+            for qid, query in query_dict.items():
                 assert isinstance(query, Query)
 
                 query_id = query.query_id
                 node_addr = query.node_addr
-                last_plan_result = query.get_plan_result()
+                last_plan_result = query.get_last_plan_result()
                 user_constraint = query.user_constraint
                 assert node_addr
 

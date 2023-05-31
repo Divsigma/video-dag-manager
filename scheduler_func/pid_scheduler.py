@@ -87,8 +87,6 @@ def get_next_exec_plan(
     # 仅支持pipeline
     flow = dag["flow"]
     assert isinstance(flow, list), "flow not list"
-    flow_input = dag["input"]
-    input_deli = dag["input_deliminator"]
 
     available_fps = [24, 30, 60, 120]
     # available_npxpf = [480*360, 858*480, 1280*720, 1920*1080]
@@ -155,20 +153,14 @@ def get_cold_start_plan(
         "encoder": "JPEG",
     }
 
-    # 应用层紧耦合的调度...
-    assert dag["flow"][0] == dag["generator"], "first element of dag['flow'] not generator"
-    if dag["generator"] == "ClipGenerator":
-        cold_video_conf["ntracking"] = 5
-
     cold_flow_mapping = dict()
 
     for taskname in dag["flow"]:
-        if taskname not in dag["generator"]:
-            cold_flow_mapping[taskname] = {
-                "model_id": 0,
-                "node_role": "host",
-                "node_ip": list(resource_info["host"].keys())[0]
-            }
+        cold_flow_mapping[taskname] = {
+            "model_id": 0,
+            "node_role": "host",
+            "node_ip": list(resource_info["host"].keys())[0]
+        }
 
     prev_video_conf[job_uid] = cold_video_conf
     prev_flow_mapping[job_uid] = cold_flow_mapping
@@ -190,8 +182,6 @@ def adjust_parameters(output=0, job_uid=None,
     # 仅支持pipeline
     flow = dag["flow"]
     assert isinstance(flow, list), "flow not list"
-    flow_input = dag["input"]
-    input_deli = dag["input_deliminator"]
 
     available_fps = [24, 30, 60, 120]
     # available_npxpf = [480*360, 858*480, 1280*720, 1920*1080]
