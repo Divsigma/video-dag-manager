@@ -1,8 +1,6 @@
-# video-dag-manager
+# video-dag-manager (no-render)
 
-## job_tracker
-
-### （1）大致结构
+## （1）大致结构
 
 `job_tracker.py`运行后是单进程多线程的，其线程模型如下图所示（目前只有一个工作线程，详见main函数部分）。用户通过/user/submit_job接口针对视频流下发任务，任务被下发到特定的边缘节点后，在边缘节点为任务生成Job对象，然后确定Job执行计划（以下称为“调度”）、根据调度结果执行Job，一段时间后Job可以被重新调度：
 
@@ -24,7 +22,7 @@ Job状态主要有三类
 - EXEC：已生成调度计划，可供CPU调度执行
 - DONE：终止，可能是执行完毕，也可能是执行过程中有报错
 
-### （2）启动方式
+## （2）启动方式
 
 版本要求：
 
@@ -35,62 +33,62 @@ Job状态主要有三类
 伪分布式启动：
 
 ```shell
-# 伪分布式：单机上，先启动service_demo（监听5500端口），后启动job_tracker（监听5000~5002端口）
+# 先启动query_manager（监听5000端口），后启动job_manager（监听5001端口，并通过5001端口与query_manager通信）
 # 注意：在项目根目录下新建input/目录存放数据视频————input.mov、input1.mp4、traffic-720p.mp4
 $ python3 service_demo.py
-$ python3 job_tracker.py --side=c --mode=pseudo
+$ python3 query_manager.py
+$ python3 job_manager.py
 
-# 或使用如下命令，方便在文件中查询error日志
-$ python3 job_tracker.py --side=c --mode=pseudo 2>&1 | tee job_tracker.log
+# 使用如下命令，方便在文件中查询error日志
+$ python3 job_manager.py 2>&1 | tee demo.log
 ```
 
 分布式启动：
 
 ```shell
-# 修改service_demo.py中的"cloud"的ip为边端可访问的云端ip
+# 注意：修改service_demo.py中的"cloud"的ip为边端可访问的云端ip
 cloud$ python3 service_demo.py
-# --side指定启动时所属角色（c和e分别代表云端和边端）
-# --mode指明启动模式（pseudo和cluster分别代表单机伪分布式和分布式）
 # --serv_cloud_addr指定请求计算服务的ip和端口
-cloud$ python3 job_tracker.py \
-               --side=c \
-               --mode=cluster \
+cloud$ python3 query_manager.py \
                --serv_cloud_addr=114.212.81.11:5500
 
-# service_demo.py的修改与cloud的文件保持一致
+# 注意：service_demo.py的修改与cloud的文件保持一致
 edge$ python3 service_demo.py
-# --cloud_ip指明cluster启动模式下云端
-edge$ python3 job_tracker.py \
-              --side=e \
-              --mode=cluster \
-              --cloud_ip=114.212.81.11 \
+# 参数说明：
+#   --query_addr指明边端接入点（注册视频流信息、汇报结果、接收调度结果）
+# 注意：
+#   在项目根目录下新建input/目录存放数据视频————input.mov、input1.mp4、traffic-720p.mp4
+edge$ python3 job_manager.py \
+              --query_addr=114.212.81.11:5000 \
               --serv_cloud_addr=114.212.81.11:5500
 ```
 
-### （3）服务接口示例
+## （3）服务接口示例
 
 ```js
-face_detection
+描述：提供D计算服务
+接口：POST :5500/service/face_detection
 输入
 {
     "image": "\x003\x001..."
 }
 输出
 {
+    "faces": ["\x003\x001...", ...],  // 检测出来的人脸图像
     "bbox": [[1,2,3,4], [1,2,3,4], ...],
     "prob": []
 }
 
-face_alignment
+描述：提供C计算服务
+接口：POST :5500/service/face_alignment
 输入
 {
-    "image": "\x003\x001...",
+    "faces": ["\x003\x001...", ...],  // 需要做姿态估计的人脸图像
     "bbox": [[1,2,3,4], [1,2,3,4], ...],
     "prob": []
 }
 输出
 {
-    "image": "\x007\x008...",  // 渲染后的图片（用统一工具类field_codec_utils编码后的字节流字符串）
     "count_result": {  // 可以显示的数值结果
         "up": 6,
         "total": 8
@@ -98,7 +96,7 @@ face_alignment
 }
 ```
 
-### （4）相关用户接口
+## （4）相关用户接口
 
 ```js
 描述：获取接入到云端的节点信息
@@ -136,19 +134,8 @@ face_alignment
     }
 }
 
-描述：从云端接收用户提交的任务约束
-接口：POST :5000/user/submit_job_user_constraint
-请求数据：
-{
-    "job_uid": "GLOBAL_ID_1.SUB_ID",
-    "user_constraint": {
-        "delay": 0.3,  // 时延，以秒为单位
-        "accuracy": 10,  // 精度等级，待定
-    }
-}
-
 描述：从云端获取指定任务的结果
-接口：GET :5000/user/sync_job_result/<job_uid>
+接口：GET :5000/query/get_result/<query_id>
 {
     "result": {
         // 该部分是列表，代表最近10帧的处理结果
@@ -187,8 +174,6 @@ face_alignment
                 "video_conf": {
                     "encoder": "H264",
                     "fps": 24,
-                    "nskip": 0,  // 跳帧率，每处理一帧跳nskip帧
-                    "ntracking": 5,  // 追踪率，每处理一帧追踪ntracking帧
                     "resolution": "360p"
                 }
             },
@@ -210,79 +195,25 @@ face_alignment
 返回数据：流式jpeg图片响应，直接放入img标签可显示
 ```
 
-### （5）相关内部接口
+## （5）其他内部接口（用户无关）
 
 ```js
-描述：指定节点提交任务
+描述：指定节点提交任务，该接口在本地为job生成实例，每个job一个线程。主线程轮询任务集，若发现一个新启动的job收到了下发的调度策略，则为该job分配线程并启动。
 接口：POST `:5001/node/submit_job`
-请求数据：与`:5000/user/submit_job`接口几乎一致，但需要指明unique_job_id（由内部生成切分DAG后生成）
+
 {
-    "unique_job_id": "GLOBAL_ID_1.SUB_ID_1",
     "node_addr": "192.168.56.102:7000",
     "video_id": 1,
-    "dag": {
-        "generator": "SingleFrameGenerator",
-        "flow": ["SingleFrameGenerator", "face_detection", "face_alignment"],
-        "input": {
-            "face_detection": {
-                "image": "SingleFrameGenerator.image"
-            },
-            "face_alignment": {
-                "image": "SingleFrameGenerator.image",
-                "bbox": "face_detection.bbox",
-                "prob": "face_detection.prob"
-            }
-        }
+    "pipeline": ["face_detection", "face_alignment"],
+    "user_constraint": {
+        "delay": 0.8,
+        "accuracy": 0.9
     }
 }
 
-描述：单帧数据生成器
-名称：SingleFrameGenerator
-返回数据
-{
-    "image": // RGB图像经过python3的cv2.imencode编码后的字节流
-}
-
-描述：多帧数据生成器
-名称：ClipGenerator
-返回数据
-{
-    "clip" : ["xxx", "bbbb"]
-}
 ```
 
-## service_demo
-
-```js
-描述：提供D计算服务
-接口：POST :5500/service/face_detection
-请求数据：作为dag中接收数据的服务，其请求数据格式需要于指定的数据生成器的返回数据格式一致
-         如选择SingleFrameGenerator作为数据生成器，则计算服务需要处理数据
-{
-    "image": // RGB图像经过python3的cv2.imencode编码后的字节流
-}
-返回数据
-{
-    "faces":
-    "bbox":
-    "prob":
-}
-
-描述：提供C计算服务
-接口：POST :5500/service/face_alignment
-请求数据：
-{
-    "faces":
-    "bbox":
-    "prob":
-}
-返回数据：
-{
-    "count_result":
-}
-```
-
-## 调度器函数接口
+## （6）调度器函数接口
 
 云端集中调度，所以需要有通信接口
 

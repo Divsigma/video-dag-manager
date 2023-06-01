@@ -8,8 +8,9 @@ if __name__ == "__main__":
     sess = requests.Session()
 
     # 提交请求
+    node_addr = "172.27.152.177:5001"
     query_body = {
-        "node_addr": "127.0.0.1:5001",
+        "node_addr": node_addr,
         "video_id": 1,
         "pipeline": ["face_detection", "face_alignment"],
         "user_constraint": {
@@ -17,7 +18,10 @@ if __name__ == "__main__":
             "accuracy": 0.9
         }
     }
-    r = sess.post(url="http://192.168.56.102:5000/query/submit_query",
+
+    # query_addr = "192.168.56.102:5000"
+    query_addr = "114.212.81.11:5000"
+    r = sess.post(url="http://{}/query/submit_query".format(query_addr),
                   json=query_body)
     
     resp = r.json()
@@ -43,7 +47,7 @@ if __name__ == "__main__":
             try:
                 time.sleep(1)
                 print("post one query request")
-                r = sess.get(url="http://192.168.56.102:5000/query/get_result/{}".format(query_id))
+                r = sess.get(url="http://{}/query/get_result/{}".format(query_addr, query_id))
                 if not r.json():
                     continue
                 resp = r.json()
