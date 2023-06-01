@@ -148,9 +148,8 @@ def get_cold_start_plan(
     cold_video_conf = {
         "resolution": "360p",
         "fps": 24,
-        "nskip": 0,
         # "ntracking": 5,
-        "encoder": "JPEG",
+        # "encoder": "JPEG",
     }
 
     cold_flow_mapping = dict()

@@ -98,24 +98,55 @@ class FaceAlignmentCNN:
         :param box:
         :return: euler angles
         '''
-        image = input_ctx['image']
+
+        head_pose = []
+
+        # ---- 基于image和bbox生成face，然后计算head_pose
+        # image = input_ctx['image']
+        # bbox = input_ctx['bbox']
+        # prob = input_ctx['prob']
+        # # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # height, width, _ = image.shape
+        # #for i in range(50):
+        # print('[{}] len(bbox)={}'.format(__name__, len(bbox)))
+        # for x_min, y_min, x_max, y_max in bbox:
+
+        #     x_min = int(max(x_min, 0))
+        #     y_min = int(max(y_min, 0))
+        #     x_max = int(min(width, x_max))
+        #     y_max = int(min(height, y_max))
+
+        #     #print('[{}] Face scale: {} {}'.format(__name__, x_max - x_min, y_max - y_min))
+
+        #     face = Image.fromarray(image[y_min:y_max, x_min:x_max])
+        #     face = self.__transformations(face)
+        #     face = face.view(1, face.shape[0], face.shape[1], face.shape[2])
+  
+        #     if use_gpu(self.__gpu):
+        #         face = Variable(face).cuda(self.__gpu)
+        #     else:
+        #         face = Variable(face)
+
+        #     yaw, pitch, roll = self.__model(face)
+        #     yaw_predicted = F.softmax(yaw, dim=1)
+        #     pitch_predicted = F.softmax(pitch, dim=1)
+        #     roll_predicted = F.softmax(roll, dim=1)
+        #     yaw_predicted = torch.sum(yaw_predicted.data[0] * self.__idx_tensor) * 3 - 99
+        #     pitch_predicted = torch.sum(pitch_predicted.data[0] * self.__idx_tensor) * 3 - 99
+        #     roll_predicted = torch.sum(roll_predicted.data[0] * self.__idx_tensor) * 3 - 99
+        #     head_pose.append([yaw_predicted, pitch_predicted, roll_predicted, (x_min + x_max) / 2, (y_min + y_max) / 2, (y_max - y_min) / 2])
+
+
+        # ---- 基于faces结果计算head_pose
+        faces = input_ctx['faces']
         bbox = input_ctx['bbox']
         prob = input_ctx['prob']
-        head_pose = []
-        # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        height, width, _ = image.shape
-        #for i in range(50):
         print('[{}] len(bbox)={}'.format(__name__, len(bbox)))
-        for x_min, y_min, x_max, y_max in bbox:
-
-            x_min = int(max(x_min, 0))
-            y_min = int(max(y_min, 0))
-            x_max = int(min(width, x_max))
-            y_max = int(min(height, y_max))
+        for face in faces:
 
             #print('[{}] Face scale: {} {}'.format(__name__, x_max - x_min, y_max - y_min))
 
-            face = Image.fromarray(image[y_min:y_max, x_min:x_max])
+            face = Image.fromarray(face)
             face = self.__transformations(face)
             face = face.view(1, face.shape[0], face.shape[1], face.shape[2])
   
@@ -131,18 +162,8 @@ class FaceAlignmentCNN:
             yaw_predicted = torch.sum(yaw_predicted.data[0] * self.__idx_tensor) * 3 - 99
             pitch_predicted = torch.sum(pitch_predicted.data[0] * self.__idx_tensor) * 3 - 99
             roll_predicted = torch.sum(roll_predicted.data[0] * self.__idx_tensor) * 3 - 99
-            head_pose.append([yaw_predicted, pitch_predicted, roll_predicted, (x_min + x_max) / 2, (y_min + y_max) / 2, (y_max - y_min) / 2])
-            #output = utils2.draw_axis(output, yaw_predicted, pitch_predicted, roll_predicted, tdx=(x_min + x_max) / 2, tdy=(y_min + y_max) / 2, size=(y_max - y_min) / 2)
-            #if pitch_predicted < -10:
-                #cv2.rectangle(output, (x_min, y_min), (x_max, y_max), (0, 0, 255), 2)
-            #else:
-                #n_up += 1
-                #cv2.rectangle(output, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-            #n_total += 1
-            #cv2.putText(output, '{:.2f} {:.2f}'.format(prob[i], pitch_predicted), (x_min, y_min - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-
-        #cv2.putText(output, 'Up: {} Total: {}'.format(n_up, n_total), (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        #cv2.imwrite('output/head-pose/{}.jpg'.format(time.time()), output)
+            # head_pose.append([yaw_predicted, pitch_predicted, roll_predicted, (x_min + x_max) / 2, (y_min + y_max) / 2, (y_max - y_min) / 2])
+            head_pose.append([yaw_predicted, pitch_predicted, roll_predicted, (0 + face.shape[1]) / 2, (0 + face.shape[0]) / 2, (face.shape[0] - 0) / 2])
 
         output_ctx = {}
         # output_ctx['image'] = image
@@ -152,39 +173,46 @@ class FaceAlignmentCNN:
         # else:
         #     output_ctx['head_pose'] = np.array(head_pose, dtype=np.float32).tolist()
 
+        up, total, thres = 0, len(bbox), -10
+        bbox = np.reshape(bbox, (-1, 4)).astype(int)
         if use_gpu(self.__gpu):
             head_pose = torch.Tensor(head_pose).cpu().tolist()
         else:
             head_pose = np.array(head_pose, dtype=np.float32).tolist()
-
-        # render output["image"]
-        axis, up, total, thres = [], 0, 0, -10
-
-        # render bbox
-        bbox = np.reshape(bbox, (-1, 4)).astype(int)
-        for i, box in enumerate(bbox):
-            total += 1
-            cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]),
-                            (255, 0, 0), 4)
-
-        # render head pose
         for yaw, pitch, roll, tdx, tdy, size in head_pose:
             if pitch > thres:
                 up += 1
-            ax = utils.draw_axis(image, yaw, pitch, roll, tdx=tdx, tdy=tdy, size=size)
-            axis.append(ax)
-        for ax in axis:
-            ax = [int(x) for x in ax]
-            cv2.line(image, (ax[0], ax[1]), (ax[2], ax[3]), (0, 0, 255), 3)
-            cv2.line(image, (ax[0], ax[1]), (ax[4], ax[5]), (0, 255, 0), 3)
-            cv2.line(image, (ax[0], ax[1]), (ax[6], ax[7]), (0, 255, 255), 2)
-
-        # render stats
-        cv2.putText(image, 'Up: {} Total: {}'.format(up, total), (50, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        
-        # output_ctx["image"] = image
         output_ctx["count_result"] = {"up": up, "total": total}
+
+        # ---- 渲染最终结果 ----
+        # # render output["image"]
+        # axis, up, total, thres = [], 0, 0, -10
+
+        # # render bbox
+        # bbox = np.reshape(bbox, (-1, 4)).astype(int)
+        # for i, box in enumerate(bbox):
+        #     total += 1
+        #     cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]),
+        #                     (255, 0, 0), 4)
+
+        # # render head pose
+        # for yaw, pitch, roll, tdx, tdy, size in head_pose:
+        #     if pitch > thres:
+        #         up += 1
+        #     ax = utils.draw_axis(image, yaw, pitch, roll, tdx=tdx, tdy=tdy, size=size)
+        #     axis.append(ax)
+        # for ax in axis:
+        #     ax = [int(x) for x in ax]
+        #     cv2.line(image, (ax[0], ax[1]), (ax[2], ax[3]), (0, 0, 255), 3)
+        #     cv2.line(image, (ax[0], ax[1]), (ax[4], ax[5]), (0, 255, 0), 3)
+        #     cv2.line(image, (ax[0], ax[1]), (ax[6], ax[7]), (0, 255, 255), 2)
+
+        # # render stats
+        # cv2.putText(image, 'Up: {} Total: {}'.format(up, total), (50, 50),
+        #             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        # # output_ctx["image"] = image
+        # output_ctx["count_result"] = {"up": up, "total": total}
 
         return output_ctx
 

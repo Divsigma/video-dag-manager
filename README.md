@@ -263,6 +263,7 @@ face_alignment
 }
 返回数据
 {
+    "faces":
     "bbox":
     "prob":
 }
@@ -271,13 +272,13 @@ face_alignment
 接口：POST :5500/service/face_alignment
 请求数据：
 {
-    "image":
+    "faces":
     "bbox":
     "prob":
 }
 返回数据：
 {
-    "head_pose":
+    "count_result":
 }
 ```
 

@@ -4,6 +4,7 @@ from .vision.ssd.mb_tiny_fd import create_mb_tiny_fd, create_mb_tiny_fd_predicto
 from .vision.ssd.mb_tiny_RFB_fd import create_Mb_Tiny_RFB_fd, create_Mb_Tiny_RFB_fd_predictor
 
 import os
+from PIL import Image
 
 class FaceDetection:
 
@@ -47,8 +48,28 @@ class FaceDetection:
         boxes, labels, probs = self.__predictor.predict(image,
                                                         self.__args['candidate_size'] / 2,
                                                         self.__args['threshold'])
+
+        # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        height, width, _ = image.shape
+        #for i in range(50):
+        print('[{}] len(boxes)={}'.format(__name__, len(boxes)))
+        faces = []
+        for x_min, y_min, x_max, y_max in boxes:
+
+            x_min = int(max(x_min, 0))
+            y_min = int(max(y_min, 0))
+            x_max = int(min(width, x_max))
+            y_max = int(min(height, y_max))
+
+            #print('[{}] Face scale: {} {}'.format(__name__, x_max - x_min, y_max - y_min))
+
+            faces.append(image[y_min:y_max, x_min:x_max])
+
+
         output_ctx = {}
-        output_ctx['image'] = image
+
+        # output_ctx['image'] = image
+        output_ctx['faces'] = faces
         output_ctx['bbox'] = [boxes[i, :].numpy().tolist() for i in range(boxes.size(0))]
         output_ctx['prob'] = [probs[i].item() for i in range(probs.size(0))]
         return output_ctx
@@ -59,8 +80,8 @@ if __name__ == '__main__':
         'input_size': 480,
         'threshold': 0.7,
         'candidate_size': 1500,
-        # 'device': 'cpu'
-        'device': 'cuda:0'
+        'device': 'cpu'
+        # 'device': 'cuda:0'
     }
 
     detector = FaceDetection(args)

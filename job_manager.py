@@ -54,16 +54,18 @@ def sfg_get_next_init_task(video_cap=None, video_conf=None):
 
     # 从视频流读取一帧，根据fps跳帧
     video_fps = video_cap.get(cv2.CAP_PROP_FPS)
+    conf_fps = video_conf['fps']
     nread = 1
     frame_id = 0
-    if video_fps > video_conf['fps']:
-        nread = math.ceil(video_fps / video_conf['fps'])
-    
+    if video_fps > conf_fps:
+        nread = math.floor(video_fps * 1.0 / conf_fps + 0.5)
+    print("video_fps={} conf_fps={} nread={}".format(video_fps, conf_fps, nread))
     while nread:
         frame_id = video_cap.get(cv2.CAP_PROP_POS_FRAMES)
         ret, frame = video_cap.read()
         nread -= 1
         assert ret
+    print("frame_id={}".format(frame_id))
 
     # 根据video_conf['resolution']调整大小
     frame = cv2.resize(frame, (
@@ -307,6 +309,10 @@ class Job():
 
                 st_time = time.time()
                 output_ctx = self.invoke_service(serv_url=url, taskname=taskname, input_ctx=input_ctx)
+                # 重试
+                while not output_ctx:
+                    time.sleep(1)
+                    output_ctx = self.invoke_service(serv_url=url, taskname=taskname, input_ctx=input_ctx)
                 ed_time = time.time()
                 root_logger.info("got service result: {}, (delta_t={})".format(
                                   output_ctx.keys(), ed_time - st_time))
@@ -333,13 +339,15 @@ class Job():
     def invoke_service(self, serv_url, taskname, input_ctx):
         root_logger.info("get serv_url={}".format(serv_url))
 
-        r = self.sess.post(url=serv_url, json=input_ctx)
+        r = None
 
         try:
+            r = self.sess.post(url=serv_url, json=input_ctx)
             return r.json()
 
         except Exception as e:
-            root_logger.error("got serv result: {}".format(r.text))
+            if r:
+                root_logger.error("got serv result: {}".format(r.text))
             root_logger.error("caught exception: {}".format(e), exc_info=True)
             return None
 

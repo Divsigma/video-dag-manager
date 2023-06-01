@@ -118,8 +118,8 @@ def cal(serv_name, input_ctx):
     st_time = time.time()
 
     if serv_name == "face_detection":
-        assert "image" in input_ctx.keys()
         # 解码
+        assert "image" in input_ctx.keys()
         input_ctx["image"] = field_codec_utils.decode_image(input_ctx["image"])
         # 执行
         output_ctx = registered_services[serv_name](input_ctx)
@@ -127,16 +127,25 @@ def cal(serv_name, input_ctx):
         # 编码
         if "image" in output_ctx:
             output_ctx["image"] = field_codec_utils.encode_image(output_ctx["image"])
+        if "faces" in output_ctx:
+            for i in range(len(output_ctx["faces"])):
+                face = output_ctx["faces"][i]
+                output_ctx["faces"][i] = field_codec_utils.encode_image(face)
         # output_ctx["bbox"] = [[1,1,3,3],[4,4,7,7],[13,15,30,30],[20,27,35,35]]
         # output_ctx["prob"] = [0.1,0.2,0.3,0.4]
         # time.sleep(1)
     
     if serv_name == "face_alignment":
-        assert "image" in input_ctx.keys()
+        assert "image" in input_ctx.keys() or "faces" in input_ctx.keys()
         assert "bbox" in input_ctx.keys()
         assert "prob" in input_ctx.keys()
         # 解码
-        input_ctx["image"] = field_codec_utils.decode_image(input_ctx["image"])
+        if "image" in input_ctx:
+            input_ctx["image"] = field_codec_utils.decode_image(input_ctx["image"])
+        if "faces" in input_ctx:
+            for i in range(len(input_ctx["faces"])):
+                face = input_ctx["faces"][i]
+                input_ctx["faces"][i] = field_codec_utils.decode_image(face)
         # 执行
         output_ctx = registered_services[serv_name](input_ctx)
 
