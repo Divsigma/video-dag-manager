@@ -57,83 +57,6 @@ class PIDController:
             print("send to cloud")
 
 
-def get_next_exec_plan(
-    job_uid=None,
-    dag=None,
-    resource_info=None,
-    user_constraint=None,
-    faster=True
-):
-    assert job_uid, "should provide job_uid"
-
-    global prev_video_conf, prev_flow_mapping
-    global pidControl
-
-    next_video_conf = prev_video_conf[job_uid]
-    next_flow_mapping = prev_flow_mapping[job_uid]
-
-    # 枚举策略，选出提速最快的方案。【变量离散化，每次只改变一个维度】。策略变量：
-    # 视频流配置变量=[处理时长，帧率，跳帧率，像素点个数]，记作[t, fps, skpps, npxpf]
-    # 各模型配置变量=[模型计算量]，记作[nparam]（代表计算量）
-    # 各节点、各服务资源配置=[带宽，cpu单周期占有率，cpu单周期计算次数]，记作[bw, cpu_ratio, cpu_ntimes]
-    # 任务t是否卸载到节点j执行，记作O(t,j)
-
-    # 各配置变量与时延关系（用最简单的knowledge base预估时延）：
-    # 正相关（+t）：fps、npxpf、各服务nparam
-    # 负相关（-t）：skpps、各服务cpu_ratio、各服务cpu_ntimes
-    # 不定：边+云协同的切分点，【约束】————尽量先在边做（为了安全性），
-    #      所以一开始先尽量压榨边的算力，压榨完了再上云。资源&视频流配置更改后，重新按此逻辑压榨
-
-    # 仅支持pipeline
-    flow = dag["flow"]
-    assert isinstance(flow, list), "flow not list"
-
-    available_fps = [24, 30, 60, 120]
-    # available_npxpf = [480*360, 858*480, 1280*720, 1920*1080]
-    available_resolution = ["360p", "480p", "720p", "1080p"]
-
-    # 记用户时延要求[lb, ub]
-    # 1、若时延>ub：根据预估配置-时延正负相关关系，先提高资源配置、降低视频流配置，尽量减少当前协同方式下处理时延
-    #                压榨完配置还不行，开始调整协同方式，逐步卸载到云端处理
-    # 2、若时延<lb：同样根据关系，先降低资源配置、提高视频流配置，在保证服务质量情况下降低资源消耗
-    #            调整完配置若发现超时，进入情况1，情况一会重新提高资源配置（或降低视频流配置）
-
-    resolution_index = available_resolution.index(
-        next_video_conf["resolution"])
-    fps_index = available_fps.index(next_video_conf["fps"])
-
-    if faster:
-        if resolution_index > 0:
-            next_video_conf["resolution"] = available_resolution[resolution_index - 1]
-        elif fps_index > 0:
-            next_video_conf["fps"] = available_fps[fps_index - 1]
-        else:
-            # 在dag中从后往前，逐步卸载到云（不考虑边边协同）
-            for taskname, task_mapping in reversed(next_flow_mapping.items()):
-                if task_mapping["node_role"] == "host":
-                    next_flow_mapping[taskname]["node_role"] = "cloud"
-                    next_flow_mapping[taskname]["node_ip"] = list(
-                        resource_info["cloud"].keys())[0]
-                    break
-    else:
-        if resolution_index + 1 < len(available_resolution):
-            next_video_conf["resolution"] = available_resolution[resolution_index + 1]
-        elif fps_index + 1 < len(available_fps):
-            next_video_conf["fps"] = available_fps[fps_index + 1]
-        else:
-            # 在dag中从前往后，逐步回拉到边（不考虑边边协同）
-            for taskname, task_mapping in next_flow_mapping.items():
-                if task_mapping["node_role"] != "host":
-                    next_flow_mapping[taskname]["node_role"] = "host"
-                    next_flow_mapping[taskname]["node_ip"] = list(
-                        resource_info["host"].keys())[0]
-                    break
-
-    prev_video_conf[job_uid] = next_video_conf
-    prev_flow_mapping[job_uid] = next_flow_mapping
-    return prev_video_conf[job_uid], prev_flow_mapping[job_uid]
-
-
 def get_cold_start_plan(
     job_uid=None,
     dag=None,
@@ -160,6 +83,14 @@ def get_cold_start_plan(
             "node_role": "host",
             "node_ip": list(resource_info["host"].keys())[0]
         }
+    
+    from scheduler_func import demo_scheduler
+    # from demo_scheduler import get_cold_start_plan as demo_get_cold_start_plan
+
+    cold_video_conf, cold_flow_mapping = demo_scheduler.get_cold_start_plan(job_uid=job_uid,
+                                                                            dag=dag,
+                                                                            resource_info=resource_info,
+                                                                            user_constraint=user_constraint)
 
     prev_video_conf[job_uid] = cold_video_conf
     prev_flow_mapping[job_uid] = cold_flow_mapping
@@ -315,26 +246,3 @@ def scheduler(
                              dag=dag,
                              resource_info=resource_info,
                              user_constraint=user_constraint)
-
-    # if sum(last_plan_res["delay"].values()) > delay_ub:
-    #     # 上次调度时延 > 用户约束上界，提高处理速度
-    #     root_logger.info("to get FASTER executation plan")
-    #     return get_next_exec_plan(
-    #         job_uid=job_uid,
-    #         dag=dag,
-    #         resource_info=resource_info,
-    #         user_constraint=user_constraint,
-    #         faster=True
-    #     )
-    # elif sum(last_plan_res["delay"].values()) < delay_lb:
-    #     # 降低处理速度
-    #     root_logger.info("to get slower executation plan")
-    #     return get_next_exec_plan(
-    #         job_uid=job_uid,
-    #         dag=dag,
-    #         resource_info=resource_info,
-    #         user_constraint=user_constraint,
-    #         faster=False
-    #     )
-
-    # return prev_video_conf[job_uid], prev_flow_mapping[job_uid]

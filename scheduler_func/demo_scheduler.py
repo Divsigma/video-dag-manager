@@ -35,8 +35,6 @@ def get_next_exec_plan(
     # 仅支持pipeline
     flow = dag["flow"]
     assert isinstance(flow, list), "flow not list"
-    flow_input = dag["input"]
-    input_deli = dag["input_deliminator"]
 
     available_fps = [24, 30, 60, 120]
     available_resolution = ["360p", "480p", "720p", "1080p"]
@@ -85,19 +83,18 @@ def get_flow_map(dag=None, resource_info=None, offload_ptr=None):
 
     for idx in range(len(flow)):
         taskname = flow[idx]
-        if taskname not in dag["generator"]:
-            if idx < offload_ptr:
-                cold_flow_mapping[taskname] = {
-                    "model_id": 0,
-                    "node_role": "host",
-                    "node_ip": list(resource_info["host"].keys())[0]
-                }
-            else:
-                cold_flow_mapping[taskname] = {
-                    "model_id": 0,
-                    "node_role": "cloud",
-                    "node_ip": list(resource_info["cloud"].keys())[0]
-                }
+        if idx <= offload_ptr:
+            cold_flow_mapping[taskname] = {
+                "model_id": 0,
+                "node_role": "host",
+                "node_ip": list(resource_info["host"].keys())[0]
+            }
+        else:
+            cold_flow_mapping[taskname] = {
+                "model_id": 0,
+                "node_role": "cloud",
+                "node_ip": list(resource_info["cloud"].keys())[0]
+            }
     
     return cold_flow_mapping
 
@@ -145,18 +142,16 @@ def get_cold_start_plan(
     cold_video_conf = {
         "resolution": "360p",
         "fps": 24,
-        "nskip": 0,
         # "ntracking": 5,
         "encoder": "JPEG",
     }
     cold_flow_mapping = dict()
     for taskname in dag["flow"]:
-        if taskname not in dag["generator"]:
-            cold_flow_mapping[taskname] = {
-                "model_id": 0,
-                "node_role": "host",
-                "node_ip": list(resource_info["host"].keys())[0]
-            }
+        cold_flow_mapping[taskname] = {
+            "model_id": 0,
+            "node_role": "host",
+            "node_ip": list(resource_info["host"].keys())[0]
+        }
 
 
     available_fps = [24, 30, 60, 120]
@@ -167,29 +162,24 @@ def get_cold_start_plan(
     delay_lb = delay_ub
 
     # 枚举所有策略，根据knowledge base预测时延，找出符合时延要求的/时延最小的
-    min_delay = None
+    pred_delay = None
+    min_delay_delta = None
     for fps in available_fps:
         for resol in available_resolution:
-            # generator不能offload到云
-            assert dag["flow"][0] == dag["generator"], "first element of dag['flow'] not generator"
-            for offload_ptr in range(1, len(dag["flow"])):
+
+            for offload_ptr in range(0, len(dag["flow"])):
                 flow_map = get_flow_map(dag=dag,
                                         resource_info=resource_info, 
                                         offload_ptr=offload_ptr)
                 delay = get_pred_delay(fps=fps,
                                        resolution=resol,
                                        flow_map=flow_map)
-                if not min_delay or min_delay > delay:
+                if not min_delay_delta or min_delay_delta > abs(delay_ub - delay):
                     cold_video_conf["resolution"] = resol
                     cold_video_conf["fps"] = fps
                     cold_flow_mapping = flow_map
-                    min_delay = delay
-
-
-    # 应用层紧耦合的调度...
-    assert dag["flow"][0] == dag["generator"], "first element of dag['flow'] not generator"
-    if dag["generator"] == "ClipGenerator":
-        cold_video_conf["ntracking"] = 5
+                    min_delay_delta = abs(delay_ub - delay)
+                    pred_delay = delay
 
     prev_video_conf[job_uid] = cold_video_conf
     prev_flow_mapping[job_uid] = cold_flow_mapping
