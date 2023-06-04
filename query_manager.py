@@ -260,7 +260,8 @@ def cloud_scheduler_loop(query_manager=None):
     assert isinstance(query_manager, QueryManager)
 
     # import scheduler_func.demo_scheduler
-    import scheduler_func.pid_scheduler
+    # import scheduler_func.pid_scheduler
+    import scheduler_func.pid_mogai_scheduler
 
     while True:
         # 每5s调度一次
@@ -284,7 +285,7 @@ def cloud_scheduler_loop(query_manager=None):
                 user_constraint = query.user_constraint
                 assert node_addr
 
-                conf, flow_mapping = scheduler_func.pid_scheduler.scheduler(
+                conf, flow_mapping = scheduler_func.pid_mogai_scheduler.scheduler(
                     # flow=job.get_dag_flow(),
                     job_uid=query_id,
                     dag={"generator": "x", "flow": query.pipeline},
