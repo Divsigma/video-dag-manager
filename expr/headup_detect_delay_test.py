@@ -7,8 +7,13 @@ import datetime
 if __name__ == "__main__":
     sess = requests.Session()
 
+    # expr_name = 'rack-pure-cloud-gpu'
+    # expr_name = 'tx2-pure-edge-gpu'
+    expr_name = 'tx2-gpu-rack-cpu'
+
     # 提交请求
     node_addr = "172.27.152.177:5001"
+    # node_addr = "114.212.81.11:5001"
     query_body = {
         "node_addr": node_addr,
         "video_id": 1,
@@ -21,6 +26,7 @@ if __name__ == "__main__":
 
     # query_addr = "192.168.56.102:5000"
     query_addr = "114.212.81.11:5000"
+    # query_addr = "172.27.152.177:5000"
     r = sess.post(url="http://{}/query/submit_query".format(query_addr),
                   json=query_body)
     
@@ -32,6 +38,7 @@ if __name__ == "__main__":
         '_' + os.path.basename(__file__).split('.')[0] + \
         '_' + str(query_body['user_constraint']['delay']) + \
         '_' + str(query_body['user_constraint']['accuracy']) + \
+        '_' + expr_name + \
         '.csv'
     
     with open(filename, 'w', newline='') as fp:
