@@ -41,30 +41,41 @@ def resolution_test():
                                             cap.get(cv2.CAP_PROP_FRAME_WIDTH),
                                             cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
+def get_next_conf_frame(cap, conf_fps, video_fps, curr_conf_frame_id):
+    frame = None
+    new_video_frame_id = None
+    new_conf_frame_id = None
+    while True:
+        # 从video_fps中实际读取
+        video_frame_id = cap.get(cv2.CAP_PROP_POS_FRAMES)
+        ret, frame = cap.read()
+        assert ret
+
+        conf_frame_id = math.floor((conf_fps * 1.0 / video_fps) * video_frame_id)
+        if conf_frame_id > curr_conf_frame_id:
+            new_video_frame_id = video_frame_id
+            new_conf_frame_id = conf_frame_id
+            break
+    
+    return new_video_frame_id, new_conf_frame_id, frame
+
 def fps_test():
     cap = cv2.VideoCapture("input/input1.mp4")
 
     video_fps = cap.get(cv2.CAP_PROP_FPS)
-    conf_fps = 20
+    conf_fps = 24
 
-    video_frame_id = 0
-    conf_frame_id = 0
+    curr_video_frame_id = 0
+    curr_conf_frame_id = 0
 
     while True:
         # 实现conf_fps
         frame = None
-        while True:
-            # 从video_fps中实际读取
-            video_frame_id = cap.get(cv2.CAP_PROP_POS_FRAMES)
-            ret, frame = cap.read()
-            assert ret
-
-            new_conf_frame_id = math.floor((conf_fps * 1.0 / video_fps) * video_frame_id)
-            if new_conf_frame_id > conf_frame_id:
-                conf_frame_id = new_conf_frame_id
-                break
-
+        video_frame_id, conf_frame_id, frame = get_next_conf_frame(cap, conf_fps, video_fps, curr_conf_frame_id)
         print("video_frame_id={} conf_frame_id={}".format(video_frame_id, conf_frame_id))
+
+        curr_video_frame_id = video_frame_id
+        curr_conf_frame_id = conf_frame_id
 
 if __name__ == '__main__':
     # resolution_test()

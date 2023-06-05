@@ -37,35 +37,41 @@ resolution_wh = {
     }
 }
 
-# SingleFrameGenerator的数据生成函数
-def sfg_get_next_init_task(video_cap=None, video_conf=None):
-    # # 模拟产生数据
-    # frame = list()
-    # for i in range(10):
-    #     frame.append(list())
-    #     for j in range(3):
-    #         frame[i].append(random.randint(1,1000))
-    # import numpy
-    # frame = numpy.array(frame)
-
+def sfg_get_next_init_task(
+    video_cap=None,
+    video_conf=None,
+    curr_cam_frame_id=None,
+    curr_conf_frame_id=None
+):
     assert video_cap
 
     global resolution_wh
 
     # 从视频流读取一帧，根据fps跳帧
-    video_fps = video_cap.get(cv2.CAP_PROP_FPS)
-    conf_fps = video_conf['fps']
-    nread = 1
-    frame_id = 0
-    if video_fps > conf_fps:
-        nread = math.floor(video_fps * 1.0 / conf_fps + 0.5)
-    print("video_fps={} conf_fps={} nread={}".format(video_fps, conf_fps, nread))
-    while nread:
-        frame_id = video_cap.get(cv2.CAP_PROP_POS_FRAMES)
+    cam_fps = video_cap.get(cv2.CAP_PROP_FPS)
+    conf_fps = min(video_conf['fps'], cam_fps)
+
+    frame = None
+    new_cam_frame_id = None
+    new_conf_frame_id = None
+    while True:
+        # 从video_fps中实际读取
+        cam_frame_id = video_cap.get(cv2.CAP_PROP_POS_FRAMES)
         ret, frame = video_cap.read()
-        nread -= 1
         assert ret
-    print("frame_id={}".format(frame_id))
+
+        conf_frame_id = math.floor((conf_fps * 1.0 / cam_fps) * cam_frame_id)
+        if conf_frame_id != curr_conf_frame_id:
+            # 提高fps时，conf_frame_id 远大于 curr_conf_frame_id
+            # 降低fps时，conf_frame_id 远小于 curr_conf_frame_id
+            # 持平fps时，conf_frame_id 最多为 curr_conf_frame_id + 1
+            new_cam_frame_id = cam_frame_id
+            new_conf_frame_id = conf_frame_id
+            break
+
+    print("cam_fps={} conf_fps={}".format(cam_fps, conf_fps))
+    print("new_cam_frame_id={} new_conf_frame_id={}".format(new_cam_frame_id, new_conf_frame_id))
+
 
     # 根据video_conf['resolution']调整大小
     frame = cv2.resize(frame, (
@@ -85,7 +91,7 @@ def sfg_get_next_init_task(video_cap=None, video_conf=None):
     root_logger.warning(
         "only unsupport init task with one image frame as input")
 
-    return frame_id, input_ctx
+    return new_cam_frame_id, new_conf_frame_id, input_ctx
 
 class JobManager():
     # 保存执行结果的缓冲大小
@@ -281,10 +287,15 @@ class Job():
         cap = cv2.VideoCapture(self.manager.get_video_info_by_id(self.video_id)['url'])
 
         n = 0
-        prev_frame_id = 0
+        curr_cam_frame_id = 0
+        curr_conf_frame_id = 0
         while True:
             # 1、根据video_conf，获取本次循环的输入数据（TODO：从缓存区读取）
-            frame_id, output_ctx = sfg_get_next_init_task(video_cap=cap, video_conf=self.video_conf)
+            cam_frame_id, conf_frame_id, output_ctx = \
+                sfg_get_next_init_task(video_cap=cap,
+                                       video_conf=self.video_conf,
+                                       curr_cam_frame_id=curr_cam_frame_id,
+                                       curr_conf_frame_id=curr_conf_frame_id)
             root_logger.info("done generator task, get_next_init_task({})".format(output_ctx.keys()))
             
             # 2、执行
@@ -319,11 +330,13 @@ class Job():
                 plan_result['delay'][taskname] = ed_time - st_time
 
             n += 1
-            output_ctx["frame_id"] = frame_id
+            output_ctx["frame_id"] = cam_frame_id
             output_ctx["n_loop"] = n
             for taskname in plan_result['delay']:
-                plan_result['delay'][taskname] = plan_result['delay'][taskname] / ((frame_id - prev_frame_id + 1) * 1.0)
-            prev_frame_id = frame_id
+                plan_result['delay'][taskname] = \
+                    plan_result['delay'][taskname] / ((cam_frame_id - curr_cam_frame_id + 1) * 1.0)
+            curr_cam_frame_id = cam_frame_id
+            curr_conf_frame_id = conf_frame_id
 
             # 3、TODO：记录结果，并通过job manager同步结果到query manager
             self.manager.sync_job_result(job_uid=self.get_job_uid(),
