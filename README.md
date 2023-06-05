@@ -2,25 +2,25 @@
 
 ## （1）大致结构
 
-`job_tracker.py`运行后是单进程多线程的，其线程模型如下图所示（目前只有一个工作线程，详见main函数部分）。用户通过/user/submit_job接口针对视频流下发任务，任务被下发到特定的边缘节点后，在边缘节点为任务生成Job对象，然后确定Job执行计划（以下称为“调度”）、根据调度结果执行Job，一段时间后Job可以被重新调度：
+云端运行`query_manger.py`，在5000端口提供服务；
 
-![job_tracker线程模型](./img/job_tracker线程模型.png)
+边端运行`job_manager.py`，在5001端口提供服务；
 
-三类线程通过Manager类统一管理：
+云端+边端运行`service_demo.py`，在5500端口提供服务；
 
-- app线程：对外提供服务，如用户提交任务、查询视频流信息等，相关接口定义见`job_tracker.py`中app.route
-- scheduler线程：负责执行调度器模块，其调度函数可替换
-- 工作线程：一个工作线程模拟一个CPU核，负责若干个已生成执行计划的Job的执行。目前只有一个工作线程
+总体线程模型如下图所示。用户通过/query/submit_query接口针对视频流提交查询请求（参见`expr/`的测试脚本的POST请求），查询请求被下发到特定的边缘节点后，在边缘节点为任务生成一个Job对象。云端调度器周期性地更新各查询的执行计划（以下称该过程为`调度`）、下发给对应的Job对象，Job对象负责根据调度计划，请求5500的计算服务，汇总结果上报给云：
 
-Manager类：负责管理所有工作线程的Job的状态与执行状态，工作线程需要通过Manager获取一个已确定执行计划的Job来执行。Manager同时提供app线程以对外提供服务。
+![queue_manager和job_manager线程模型](./img/queue_manager和job_manager线程模型.png)
 
-Job类：记录了DAG作业的执行状态机：调度计划、最后一次DAG执行的各个步骤结果、Job当前状态等
+Job类：一个视频流查询对应边缘节点的一个Job实例，一个Job实例对应一个线程，用于执行调度计划并定期给云端汇报结果。Job实例类似查询请求（用户在云端提交的，且在云端管理）在边端的执行代理。
+
+JobManager类：负责管理所有视频流查询代理线程的类。同时负责与QueryManager通信。
 
 Job状态主要有三类
 
-- UNSCHED：未生成调度计划
-- EXEC：已生成调度计划，可供CPU调度执行
-- DONE：终止，可能是执行完毕，也可能是执行过程中有报错
+- JOB_STATE_UNSCHED：新提交的任务，未有调度计划，不执行
+- JOB_STATE_READY：已生成调度计划，可执行，未启动
+- JOB_STATE_RUNNING：任务已在线程中启动
 
 ## （2）启动方式
 
@@ -30,11 +30,12 @@ Job状态主要有三类
 - （2）为了运行预加载模型：pytorch==1.13.0，torchvision==0.14.0，对应版本的cuda和cudnn等
 - （3）其余依赖可依据报错安装
 
+**注意**：启动`job_manager.py`的节点，应该在项目根目录下新建input/目录并存放数据视频，如input.mov、input1.mp4、traffic-720p.mp4，否则无法读取视频
+
 伪分布式启动：
 
 ```shell
 # 先启动query_manager（监听5000端口），后启动job_manager（监听5001端口，并通过5001端口与query_manager通信）
-# 注意：在项目根目录下新建input/目录存放数据视频————input.mov、input1.mp4、traffic-720p.mp4
 $ python3 service_demo.py
 $ python3 query_manager.py
 $ python3 job_manager.py
