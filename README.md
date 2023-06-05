@@ -64,7 +64,7 @@ edge$ python3 job_manager.py \
               --serv_cloud_addr=114.212.81.11:5500
 ```
 
-## （3）服务接口示例
+## （3）计算服务接口示例
 
 ```js
 描述：提供D计算服务
@@ -97,9 +97,16 @@ edge$ python3 job_manager.py \
 }
 ```
 
-## （4）相关用户接口
+## （4）QueryManager的RESTFUL接口
 
 ```js
+描述：边端接入云端，汇报视频流信息
+接口：POST :5000/node/join
+请求数据：
+{
+
+}
+
 描述：获取接入到云端的节点信息
 接口：GET :5000/node/get_video_info
 返回结果
@@ -135,8 +142,16 @@ edge$ python3 job_manager.py \
     }
 }
 
+描述：边端同步查询结果
+接口：POST :5000/query/sync_result/<query_id>
+请求数据：
+{
+
+}
+
 描述：从云端获取指定任务的结果
 接口：GET :5000/query/get_result/<query_id>
+返回结果：
 {
     "result": {
         // 该部分是列表，代表最近10帧的处理结果
@@ -189,18 +204,13 @@ edge$ python3 job_manager.py \
     },
     "status": 0
 }
-
-
-描述：从特定节点获取渲染的图片结果
-接口：GET :5100/user/video/<job_uid>
-返回数据：流式jpeg图片响应，直接放入img标签可显示
 ```
 
-## （5）其他内部接口（用户无关）
+## （5）JobManager的RESTFUL接口（一般与用户无关）
 
 ```js
 描述：指定节点提交任务，该接口在本地为job生成实例，每个job一个线程。主线程轮询任务集，若发现一个新启动的job收到了下发的调度策略，则为该job分配线程并启动。
-接口：POST `:5001/node/submit_job`
+接口：POST :5001/job/submit_job
 
 {
     "node_addr": "192.168.56.102:7000",
@@ -212,25 +222,8 @@ edge$ python3 job_manager.py \
     }
 }
 
-```
-
-## （6）调度器函数接口
-
-云端集中调度，所以需要有通信接口
-
-```js
-描述：请求云端调度。云端收到请求后，将包装成scheduler_func需要的输入，传入云端scheduler线程队列（unsched_job_q）。scheduler线程完成调度后，请求对应节点的/node/update_plan接口
-接口：POST: 5001/node/get_plan
-请求数据：
-{
-    "job_uid":
-    "dag":
-    "last_plan_result":
-    "user_constraint"
-}
-
-描述：云端调度器主动请求，以更新边端的调度计划。边端响应该接口时，将往job_dict[job_uid]中更新执行计划，并设置job为可执行的（JOB_STATE_EXEC）
-接口：POST: 5001/node/update_plan
+描述：云端调度器主动请求，以更新边端的调度计划。
+接口：POST: 5001/job/update_plan
 请求数据：
 {
     "job_uid":
@@ -239,78 +232,23 @@ edge$ python3 job_manager.py \
 }
 ```
 
+## （6）调度器函数（参见`query_manager.py`中cloud_scheduler_loop函数）
+
+云端集中调度，所以需要有通信接口，参见JobManager接口`POST: 5001/job/update_plan`。
+
 调度器应封装为一个函数，决定视频流分析配置、并将DAG Job中的dag.flow的各个任务映射到节点。
 
-函数参数：
+### 函数参数
 
 （1）待映射/调度的DAG Job
 
-- 参考`POST :5000/user/submit_job`端口的`dag`字段
+（2）DAG的输入数据信息（TBD）
 
-```js
-"dag" = {
-    "generator": "SingleFrameGenerator",
-    "flow": ["SingleFrameGenerator", "face_detection", "face_alignment"],
-    "input": {
-        "face_detection": {
-            "image": "SingleFrameGenerator.image"
-        },
-        "face_alignment": {
-            "image": "SingleFrameGenerator.image",
-            "bbox": "face_detection.bbox",
-            "prob": "face_detection.prob"
-        }
-    }
-}
-```
-
-（2）DAG的输入数据信息（暂不考虑）
-
-- 参考“数据生成器”的返回数据（如，SingleFrameGenerator）
-- 也可以是基于对本次调度的数据流的数据评估信息（如图片复杂度、图片数据大小）
-
-```js
-generator_output = {
-    "seq":
-    "image":
-}
-```
-
-（3）资源和服务情况
+（3）资源和服务情况（TBD）
 
 - 各机器CPU、内存、GPU情况
 - 各机器服务的请求地址
 - 当前节点与其余节点的上行带宽/下行带宽
-
-```js
-// TBD
-resource_info = {
-    "192.168.56.102": {
-        "face_detection": {
-            "n_process": 1,
-            "cpu_ratio": 0.8,
-            "mem_ratio": 0.4
-        },
-        "face_alignment": {
-            "n_process": 1,
-            "cpu_ratio": 0.8,
-            "mem_ratio": 0.4
-        }
-    },
-    "114.212.81.11": {
-        "face_detection": {
-            "n_process": 1,
-            "cpu_ratio": 0.8,
-            "mem_ratio": 0.4
-        },
-        "face_alignment": {
-            "n_process": 1,
-            "cpu_ratio": 0.8,
-            "mem_ratio": 0.4
-        }
-    },
-}
-```
 
 （4）上一轮调度方案的执行结果（若上一轮调度包含多帧，则取各帧数值结果的平均）
 
@@ -321,24 +259,7 @@ last_plan_res = {
     "delay": {
         "face_detection": 20,
         "face_alignment": 0.5
-    },
-    "iou": {
-        "face_detection"
-    },
-    "mae": {
-        "face_alignment"
     }
-}
-
-last_plan_res = {
-    "face_detection": {
-        "iou": 20,
-        "delay"
-    },
-    "face_alignment": {
-        "mae": 20,
-        "delay"
-    },
 }
 ```
 
@@ -349,12 +270,12 @@ last_plan_res = {
 
 ```js
 user_constraint = {
-    "delay": [-1, 50],
+    "delay": 0.3,  // 用户时延约束，单位秒
     "acc_level": 5,  // 用户给出的精度评级：0~5精确等级递增
 }
 ```
 
-函数返回：
+### 函数返回
 
 （1）视频配置
 
@@ -364,16 +285,9 @@ user_constraint = {
 
 ```js
 video_conf = {
-    "face_detection": {
-        "resolution": "480p",
-        "fps": 30,
-        "encoder": "H264",
-    },
-    "face_alignment": {
-        "resolution": "480p",
-        "fps": 30,
-        "encoder": "H264",
-    }
+    "resolution": "480p",
+    "fps": 30,
+    "encoder": "JPEG",
 }
 ```
 
