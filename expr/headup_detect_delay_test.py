@@ -7,12 +7,18 @@ import datetime
 if __name__ == "__main__":
     sess = requests.Session()
 
-    # expr_name = 'rack-pure-cloud-gpu'
+    # expr_name = 'bigger-tom-cpu'
+    # expr_name = 'rack-pure-cloud-cpu'
     # expr_name = 'tx2-pure-edge-gpu'
-    expr_name = 'tx2-gpu-rack-cpu'
+    # expr_name = 'tx2-gpu-rack-cpu'
+    # expr_name = 'rack-pure-cloud-cpu-golden'
+    # expr_name = 'tx2-pure-edge-gpu-golden'
+    # expr_name = 'rack-pure-cloud-gpu-golden'
+    expr_name = 'tx2-pure-edge-cpu-golden'
 
     # 提交请求
-    node_addr = "172.27.152.177:5001"
+    node_addr = "127.0.0.1:5001"
+    # node_addr = "172.27.152.177:5001"
     # node_addr = "114.212.81.11:5001"
     query_body = {
         "node_addr": node_addr,
@@ -25,8 +31,8 @@ if __name__ == "__main__":
     }
 
     # query_addr = "192.168.56.102:5000"
-    query_addr = "114.212.81.11:5000"
-    # query_addr = "172.27.152.177:5000"
+    # query_addr = "114.212.81.11:5000"
+    query_addr = "172.27.152.177:5000"
     r = sess.post(url="http://{}/query/submit_query".format(query_addr),
                   json=query_body)
     
