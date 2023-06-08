@@ -36,7 +36,7 @@ def get_next_exec_plan(
     flow = dag["flow"]
     assert isinstance(flow, list), "flow not list"
 
-    available_fps = [24, 30, 60, 120]
+    available_fps = [1, 5, 10, 20, 30]
     available_resolution = ["360p", "480p", "720p", "1080p"]
 
     # 记用户时延要求[lb, ub]
@@ -141,7 +141,7 @@ def get_cold_start_plan(
     # 时延优先策略：算量最小，算力最大
     cold_video_conf = {
         "resolution": "360p",
-        "fps": 24,
+        "fps": 30,
         # "ntracking": 5,
         "encoder": "JPEG",
     }
@@ -154,7 +154,7 @@ def get_cold_start_plan(
         }
 
 
-    available_fps = [24, 30, 60, 120]
+    available_fps = [1, 5, 10, 20, 30]
     available_resolution = ["360p", "480p", "720p", "1080p"]
 
     delay_ub = user_constraint["delay"]

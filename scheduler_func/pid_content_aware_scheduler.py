@@ -68,22 +68,7 @@ def get_cold_start_plan(
     assert job_uid, "should provide job_uid"
 
     global prev_video_conf, prev_flow_mapping
-
-    # 时延优先策略：算量最小，算力最大
-    cold_video_conf = {
-        "resolution": "360p",
-        "fps": 24,
-        # "encoder": "JPEG",
-    }
-
-    cold_flow_mapping = dict()
-
-    for taskname in dag["flow"]:
-        cold_flow_mapping[taskname] = {
-            "node_role": "host",
-            "node_ip": list(resource_info["host"].keys())[0]
-        }
-    
+ 
     from scheduler_func import demo_scheduler
 
     cold_video_conf, cold_flow_mapping = demo_scheduler.get_cold_start_plan(job_uid=job_uid,
