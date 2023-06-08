@@ -8,21 +8,23 @@ class Sniffer():
 
     # TODO：根据taskname解析output_ctx，得到运行时情境
     def sniff(self, taskname, output_ctx):
-        # 对detection的结果，提取目标数量、目标大小、目标速度
-
-        if taskname == 'face_detection':
-            # 定义运行时情境字段
+        if taskname == 'end_pipe':
             if 'delay' not in self.runtime_pkg_list:
                 self.runtime_pkg_list['delay'] = list()
+            
+            if len(self.runtime_pkg_list['delay']) > Sniffer.CONTENT_ELE_MAXN:
+                del self.runtime_pkg_list['delay'][0]
+            self.runtime_pkg_list['delay'].append(output_ctx['delay'])
+
+        # 对detection的结果，提取目标数量、目标大小、目标速度
+        if taskname == 'face_detection':
+            # 定义运行时情境字段
             if 'obj_n' not in self.runtime_pkg_list:
                 self.runtime_pkg_list['obj_n'] = list()
             if 'obj_size' not in self.runtime_pkg_list:
                 self.runtime_pkg_list['obj_size'] = list()
 
             # 更新各字段序列（防止爆内存）
-            if len(self.runtime_pkg_list['delay']) > Sniffer.CONTENT_ELE_MAXN:
-                del self.runtime_pkg_list['delay'][0]
-            self.runtime_pkg_list['delay'].append(output_ctx['delay'])
             if len(self.runtime_pkg_list['obj_n']) > Sniffer.CONTENT_ELE_MAXN:
                 del self.runtime_pkg_list['obj_n'][0]
             self.runtime_pkg_list['obj_n'].append(len(output_ctx['faces']))
