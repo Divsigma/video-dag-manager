@@ -115,7 +115,7 @@ class JobManager():
             {"id": 3, "type": "traffic flow outdoor", "url": "input/traffic-720p.mp4"}
         ]
 
-        # 模拟数据库：记录下发到本地的job以及该job的执行结果
+        # 模拟数据库：记录下发到本地的job
         self.job_dict = dict()
         # self.job_result_dict = dict()
 
@@ -141,8 +141,7 @@ class JobManager():
     # 获取计算服务url
     def get_chosen_service_url(self, taskname, choice):
         port = self.service_cloud_addr.split(':')[1]
-        url = "http://{}:{}/execute_task/{}".format(
-            choice["node_ip"], port, taskname)
+        url = "http://{}:{}/execute_task/{}".format(choice["node_ip"], port, taskname)
         return url
 
     # 更新调度计划：与通信进程竞争self.job_dict[job.get_job_uid()]，修改job状态
@@ -153,8 +152,18 @@ class JobManager():
         assert isinstance(job, Job)
         job.set_plan(video_conf=video_conf, flow_mapping=flow_mapping)
 
-        root_logger.info(
-            "updated job-{} plan".format(job.get_job_uid()))
+        root_logger.info("updated job-{} plan".format(job.get_job_uid()))
+        
+    # 获取运行时情境
+    def get_job_runtime(self, job_uid):
+        assert job_uid in self.job_dict.keys()
+
+        job = self.job_dict[job_uid]
+        assert isinstance(job, Job)
+        rt = job.get_runtime()
+
+        root_logger.info("get runtime of job-{}: {}".format(job_uid, rt))
+        return rt
 
     # 在本地启动新的job
     def submit_job(self, job_uid, node_addr, video_id, pipeline, user_constraint):
@@ -212,6 +221,7 @@ class JobManager():
         # 根据job的id移除job
         del self.job_dict[job.get_job_uid()]
 
+import content_func.sniffer
 
 class Job():
     JOB_STATE_UNSCHED = 0
@@ -226,9 +236,12 @@ class Job():
         self.node_addr = node_addr
         self.video_id = video_id
         self.pipeline = pipeline
-        # 执行状态机
+        # 执行状态机（本地不保存结果）
         self.state = Job.JOB_STATE_UNSCHED
         self.worker_thread = None
+        # 运行时情境
+        self.sniffer = content_func.sniffer.Sniffer(job_uid=job_uid)
+        self.current_runtime = dict()
         # 调度状态机：执行计划与历史计划的执行结果
         self.user_constraint = user_constraint
         self.flow_mapping = None
@@ -273,6 +286,17 @@ class Job():
     def get_user_constraint(self):
         return self.user_constraint
     
+    # -----------------------
+    # ---- 运行时情境相关 ----
+    def update_runtime(self, taskname, output_ctx):
+        self.sniffer.sniff(taskname=taskname, output_ctx=output_ctx)
+
+    def get_runtime(self):
+        new_runtime = self.sniffer.describe_runtime()
+        if new_runtime:
+            self.current_runtime = new_runtime
+        return self.current_runtime
+    
     # ------------------
     # ---- 执行循环 ----
     def start_worker_loop(self):
@@ -289,6 +313,8 @@ class Job():
         n = 0
         curr_cam_frame_id = 0
         curr_conf_frame_id = 0
+
+        # 逐帧汇报结果，逐帧汇报运行时情境
         while True:
             # 1、根据video_conf，获取本次循环的输入数据（TODO：从缓存区读取）
             cam_frame_id, conf_frame_id, output_ctx = \
@@ -299,6 +325,7 @@ class Job():
             root_logger.info("done generator task, get_next_init_task({})".format(output_ctx.keys()))
             
             # 2、执行
+            frame_result = dict()
             plan_result = dict()
             plan_result['delay'] = dict()
             for taskname in self.pipeline:
@@ -311,7 +338,7 @@ class Job():
                     taskname
                 ))
 
-                # 根据flow_mapping，执行task，并记录中间结果
+                # 根据flow_mapping，执行task（本地不保存结果）
                 root_logger.info("flow_mapping ={}".format(self.flow_mapping))
                 choice = self.flow_mapping[taskname]
                 root_logger.info("get choice of '{}' in flow_mapping, choose: {}".format(taskname, choice))
@@ -325,23 +352,31 @@ class Job():
                     time.sleep(1)
                     output_ctx = self.invoke_service(serv_url=url, taskname=taskname, input_ctx=input_ctx)
                 ed_time = time.time()
+
+                # 运行时感知：应用无关
                 root_logger.info("got service result: {}, (delta_t={})".format(
                                   output_ctx.keys(), ed_time - st_time))
                 plan_result['delay'][taskname] = ed_time - st_time
+                # 运行时感知：应用相关
+                self.update_runtime(taskname=taskname, output_ctx=output_ctx)
 
             n += 1
+
             output_ctx["frame_id"] = cam_frame_id
             output_ctx["n_loop"] = n
+            frame_result.update(output_ctx)
+
             for taskname in plan_result['delay']:
                 plan_result['delay'][taskname] = \
                     plan_result['delay'][taskname] / ((cam_frame_id - curr_cam_frame_id + 1) * 1.0)
             curr_cam_frame_id = cam_frame_id
             curr_conf_frame_id = conf_frame_id
 
-            # 3、TODO：记录结果，并通过job manager同步结果到query manager
+            # 3、通过job manager同步结果到query manager
+            #    注意：本地不保存结果
             self.manager.sync_job_result(job_uid=self.get_job_uid(),
                                            job_result={
-                                               "appended_result": output_ctx,
+                                               "appended_result": frame_result,
                                                "latest_result": {
                                                    "plan": self.get_plan(),
                                                    "plan_result": plan_result
@@ -404,7 +439,7 @@ def job_submit_job_cbk():
 # 接受调度计划更新
 @tracker_app.route("/job/update_plan", methods=["POST"])
 @flask_cors.cross_origin()
-def node_update_plan_cbk():
+def job_update_plan_cbk():
     para = flask.request.json
     root_logger.info("/job/update_plan got para={}".format(para))
 
@@ -415,7 +450,13 @@ def node_update_plan_cbk():
 
     return flask.jsonify({"status": 0, "msg": "node updated plan (manager.update_job_plan)"})
 
+# 获取job的运行时情境
+@tracker_app.route("/job/get_runtime/<job_uid>", methods=["GET"])
+@flask_cors.cross_origin()
+def job_sync_runtime_cbk(job_uid):
+    rt = job_manager.get_job_runtime(job_uid=job_uid)
 
+    return flask.jsonify(rt)
 
 
 

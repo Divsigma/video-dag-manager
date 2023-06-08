@@ -77,6 +77,11 @@ class Query():
                 return self.result['latest_result']['plan_result']
         return None
     
+    def get_appended_result_list(self):
+        if self.result and 'appended_result' in self.result:
+            return self.result['appended_result']
+        return None
+    
     def get_result(self):
         return self.result
 
@@ -261,7 +266,9 @@ def cloud_scheduler_loop(query_manager=None):
 
     # import scheduler_func.demo_scheduler
     # import scheduler_func.pid_scheduler
-    import scheduler_func.pid_mogai_scheduler
+    # import scheduler_func.pid_mogai_scheduler
+    import scheduler_func.pid_content_aware_scheduler
+
 
     while True:
         # 每5s调度一次
@@ -285,11 +292,19 @@ def cloud_scheduler_loop(query_manager=None):
                 user_constraint = query.user_constraint
                 assert node_addr
 
-                conf, flow_mapping = scheduler_func.pid_mogai_scheduler.scheduler(
+                # 获取当前query的运行时情境（query_id == job_uid
+                r = query_manager.sess.get(
+                    url="http://{}/job/get_runtime/{}".format(node_addr, query_id)
+                )
+                runtime_info = r.json()
+
+                # conf, flow_mapping = scheduler_func.pid_mogai_scheduler.scheduler(
+                conf, flow_mapping = scheduler_func.pid_content_aware_scheduler.scheduler(
                     # flow=job.get_dag_flow(),
                     job_uid=query_id,
                     dag={"generator": "x", "flow": query.pipeline},
                     resource_info=resource_info,
+                    runtime_info=runtime_info,
                     last_plan_res=last_plan_result,
                     user_constraint=user_constraint
                 )

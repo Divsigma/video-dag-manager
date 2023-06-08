@@ -1,6 +1,6 @@
 # video-dag-manager (no-render)
 
-## （1）大致结构
+## 1 大致结构
 
 云端运行`query_manger.py`，在5000端口提供服务；
 
@@ -22,7 +22,7 @@ Job状态主要有三类
 - JOB_STATE_READY：已生成调度计划，可执行，未启动
 - JOB_STATE_RUNNING：任务已在线程中启动
 
-## （2）启动方式
+## 2 启动方式
 
 版本要求：
 
@@ -64,7 +64,7 @@ edge$ python3 job_manager.py \
               --serv_cloud_addr=114.212.81.11:5500
 ```
 
-## （3）计算服务接口示例
+## 3 计算服务接口示例
 
 ```js
 描述：提供D计算服务
@@ -97,7 +97,7 @@ edge$ python3 job_manager.py \
 }
 ```
 
-## （4）QueryManager的RESTFUL接口
+## 4 QueryManager的RESTFUL接口
 
 ```js
 描述：边端接入云端，汇报视频流信息
@@ -206,7 +206,7 @@ edge$ python3 job_manager.py \
 }
 ```
 
-## （5）JobManager的RESTFUL接口（一般与用户无关）
+## 5 JobManager的RESTFUL接口（一般与用户无关）
 
 ```js
 描述：指定节点提交任务，该接口在本地为job生成实例，每个job一个线程。主线程轮询任务集，若发现一个新启动的job收到了下发的调度策略，则为该job分配线程并启动。
@@ -230,9 +230,17 @@ edge$ python3 job_manager.py \
     "video_conf":
     "flow_mapping":
 }
+
+描述：云端调度器主动请求，以获取边端对应query的运行时情境。运行时情境为一个调度窗口内任务复杂度（目标数量、资源消耗等）的预估值/统计值
+接口：GET：5001/job/get_runtime/<job_uid>
+返回结果：
+{
+    "obj_n": 8.6,
+    "obj_size": 645.3215
+}
 ```
 
-## （6）调度器函数（参见`query_manager.py`中cloud_scheduler_loop函数）
+## 6 调度器函数（参见`query_manager.py`中cloud_scheduler_loop函数和`scheduler_func/`目录）
 
 云端集中调度，所以需要有通信接口，参见JobManager接口`POST: 5001/job/update_plan`。
 
@@ -309,3 +317,11 @@ flow_mapping = {
     }
 }
 ```
+
+## 7 运行时情境函数（参见`job_manager.py`中worker_loop函数和Job实例的sniffer对象，以及`content_func/`目录）
+
+感知流程：
+
+（1）更新运行时情境：`Job`实例每次拿到中间执行结果后，调用`update_runtime方法`。update_runtime方法会调用`Sniffer实例`的`sniff方法`，更新运行时情境（`sniff方法`本质上是维护若干个时间序列）；
+
+（2）获取运行时情境：调度器对任务调度前，请求边端的RESTFUL接口获取query（与job对应）的情境指标。该RESTFUL接口调用对应`Job实例`的`Sniffer实例`的`describe_runtime方法`，得到可用于指导调度的情境指标（`describe_runtime方法`本质上是基于现有的情境时间序列，计算出可指导调度的指标）。
