@@ -358,17 +358,24 @@ class Job():
                                   output_ctx.keys(), ed_time - st_time))
                 plan_result['delay'][taskname] = ed_time - st_time
                 # 运行时感知：应用相关
-                self.update_runtime(taskname=taskname, output_ctx=output_ctx)
+                wrapped_ctx = output_ctx.copy()
+                wrapped_ctx['delay'] = (ed_time - st_time) / ((cam_frame_id - curr_cam_frame_id + 1) * 1.0)
+                # self.update_runtime(taskname=taskname, output_ctx=output_ctx)
+                self.update_runtime(taskname=taskname, output_ctx=wrapped_ctx)
 
             n += 1
 
-            output_ctx["frame_id"] = cam_frame_id
-            output_ctx["n_loop"] = n
-            frame_result.update(output_ctx)
-
+            total_frame_delay = 0
             for taskname in plan_result['delay']:
                 plan_result['delay'][taskname] = \
                     plan_result['delay'][taskname] / ((cam_frame_id - curr_cam_frame_id + 1) * 1.0)
+                total_frame_delay += plan_result['delay'][taskname]
+
+            output_ctx["frame_id"] = cam_frame_id
+            output_ctx["n_loop"] = n
+            output_ctx["delay"] = total_frame_delay
+            frame_result.update(output_ctx)
+
             curr_cam_frame_id = cam_frame_id
             curr_conf_frame_id = conf_frame_id
 
@@ -376,11 +383,12 @@ class Job():
             #    注意：本地不保存结果
             self.manager.sync_job_result(job_uid=self.get_job_uid(),
                                            job_result={
-                                               "appended_result": frame_result,
-                                               "latest_result": {
-                                                   "plan": self.get_plan(),
-                                                   "plan_result": plan_result
-                                                }
+                                               "appended_result": frame_result
+                                            #    "appended_result": frame_result,
+                                            #    "latest_result": {
+                                            #        "plan": self.get_plan(),
+                                            #        "plan_result": plan_result
+                                            #     }
                                             })
 
 

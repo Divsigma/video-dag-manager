@@ -6,6 +6,8 @@ prev_video_conf = dict()
 
 prev_flow_mapping = dict()
 
+prev_runtime_info = dict()
+
 
 lastTime = time.time()
 
@@ -101,7 +103,7 @@ def adjust_parameters(output=0, job_uid=None,
                       runtime_info=None):
     assert job_uid, "should provide job_uid"
 
-    global prev_video_conf, prev_flow_mapping
+    global prev_video_conf, prev_flow_mapping, prev_runtime_info
 
     next_video_conf = prev_video_conf[job_uid]
     next_flow_mapping = prev_flow_mapping[job_uid]
@@ -110,7 +112,7 @@ def adjust_parameters(output=0, job_uid=None,
     flow = dag["flow"]
     assert isinstance(flow, list), "flow not list"
 
-    available_fps = [24, 30, 60, 120]
+    available_fps = [1, 5, 10, 20, 30]
     # available_npxpf = [480*360, 858*480, 1280*720, 1920*1080]
     available_resolution = ["360p", "480p", "720p", "1080p"]
 
@@ -126,7 +128,7 @@ def adjust_parameters(output=0, job_uid=None,
 
     tune_msg = None
 
-    # TODO：参照对应的边端sniffer解析运行时情境\
+    # TODO：参照对应的边端sniffer解析运行时情境
     print('---- runtime_info in the past time slot ----')
     print('runtime_info = {}'.format(runtime_info))
     # obj_n = runtime_info['obj_n']
@@ -134,6 +136,9 @@ def adjust_parameters(output=0, job_uid=None,
     if level > 0:
         # level > 0，可以调整策略：提高fps和resolution，在边端计算以降低云端压力
         if level == 3:
+            # 根据运行时情境，防止震荡
+            # if job_uid in prev_runtime_info and \
+            #    abs(runtime_info['obj_n'] - prev_runtime_info[job_uid]['obj_n']) > 3:
             print(" -------- back to edge -------- ")
             for taskname, task_mapping in next_flow_mapping.items():
                 if task_mapping["node_role"] != "host":
@@ -187,9 +192,11 @@ def adjust_parameters(output=0, job_uid=None,
 
     prev_video_conf[job_uid] = next_video_conf
     prev_flow_mapping[job_uid] = next_flow_mapping
+    prev_runtime_info[job_uid] = runtime_info
 
     print(prev_flow_mapping[job_uid])
     print(prev_video_conf[job_uid])
+    print(prev_runtime_info[job_uid])
     root_logger.info("tune_msg: {}".format(tune_msg))
     
     return prev_video_conf[job_uid], prev_flow_mapping[job_uid]
@@ -200,20 +207,19 @@ def scheduler(
     dag=None,
     resource_info=None,
     runtime_info=None,
-    last_plan_res=None,
     user_constraint=None,
 ):
 
     assert job_uid, "should provide job_uid for scheduler to get prev_plan of job"
 
     root_logger.info(
-        "scheduling for job_uid-{}, last_plan_res=\n{}".format(job_uid, last_plan_res))
+        "scheduling for job_uid-{}, runtime_info=\n{}".format(job_uid, runtime_info))
 
     global lastTime
 
     # ---- 若无负反馈结果或用户无约束，则进行冷启动 ----
     # 当前方式：“时延优先”模式的冷启动（算量最低，算力未决策）
-    if not last_plan_res or not user_constraint:
+    if not runtime_info or not user_constraint:
         # 基于knowledge base给出一个方案？
         # 选择最高配置？
         # 期望：根据资源情况决定一个合理的配置，以便负反馈快速收敛到稳定方案
@@ -248,7 +254,12 @@ def scheduler(
     dt = time.time() - lastTime
     pidControl = PIDController(Kp, Ki, Kd, setpoint, dt)
 
-    output = pidControl.update(sum(last_plan_res["delay"].values()))
+    # TODO：参照对应的边端sniffer解析运行时情境
+    print('---- runtime_info in the past time slot ----')
+    print('runtime_info = {}'.format(runtime_info))
+
+    avg_delay = runtime_info['delay']
+    output = pidControl.update(avg_delay)
 
     # adjust parameters
 

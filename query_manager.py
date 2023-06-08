@@ -288,7 +288,7 @@ def cloud_scheduler_loop(query_manager=None):
 
                 query_id = query.query_id
                 node_addr = query.node_addr
-                last_plan_result = query.get_last_plan_result()
+                # last_plan_result = query.get_last_plan_result()
                 user_constraint = query.user_constraint
                 assert node_addr
 
@@ -305,7 +305,7 @@ def cloud_scheduler_loop(query_manager=None):
                     dag={"generator": "x", "flow": query.pipeline},
                     resource_info=resource_info,
                     runtime_info=runtime_info,
-                    last_plan_res=last_plan_result,
+                    # last_plan_res=last_plan_result,
                     user_constraint=user_constraint
                 )
 
