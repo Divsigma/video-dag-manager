@@ -98,6 +98,7 @@ def adjust_parameters(output=0, job_uid=None,
     assert isinstance(flow, list), "flow not list"
 
     available_fps = [1, 5, 10, 20, 30]
+    # available_fps = [10, 20, 30]
     # available_npxpf = [480*360, 858*480, 1280*720, 1920*1080]
     available_resolution = ["360p", "480p", "720p", "1080p"]
 
@@ -120,59 +121,71 @@ def adjust_parameters(output=0, job_uid=None,
 
     if level > 0:
         # level > 0，可以调整策略：提高fps和resolution，在边端计算以降低云端压力
-        if level == 3:
-            # 根据运行时情境，防止震荡
-            # if job_uid in prev_runtime_info and \
-            #    abs(runtime_info['obj_n'] - prev_runtime_info[job_uid]['obj_n']) > 3:
-            print(" -------- back to edge -------- ")
-            for taskname, task_mapping in next_flow_mapping.items():
-                if task_mapping["node_role"] != "host":
-                    next_flow_mapping[taskname]["node_role"] = "host"
-                    next_flow_mapping[taskname]["node_ip"] = list(
-                        resource_info["host"].keys())[0]
-                    tune_msg = "task-{} back to edge".format(taskname)
-                    break
+        tune_level = level
+        while not tune_msg and tune_level > 0:
+            if tune_level == 3:
+                # 根据运行时情境，防止震荡
+                # if job_uid in prev_runtime_info and \
+                #    abs(runtime_info['obj_n'] - prev_runtime_info[job_uid]['obj_n']) > 3:
+                for taskname, task_mapping in next_flow_mapping.items():
+                    if task_mapping["node_role"] != "host":
+                        print(" -------- back to edge -------- (level={}, tune_msg={})".format(level, tune_msg))
+                        next_flow_mapping[taskname]["node_role"] = "host"
+                        next_flow_mapping[taskname]["node_ip"] = list(
+                            resource_info["host"].keys())[0]
+                        tune_msg = "task-{} back to edge".format(taskname)
+                        break
 
-        if level == 2 or not tune_msg:
-            print(" -------- fps higher -------- ")
-            if fps_index + 1 < len(available_fps):
-                next_video_conf["fps"] = available_fps[fps_index + 1]
-                tune_msg = "fps {} -> {}".format(available_fps[fps_index],
-                                                 available_fps[fps_index + 1])
+            elif tune_level == 2:
+                if fps_index + 1 < len(available_fps):
+                    print(" -------- fps higher -------- (level={}, tune_msg={})".format(level, tune_msg))
+                    next_video_conf["fps"] = available_fps[fps_index + 1]
+                    tune_msg = "fps {} -> {}".format(available_fps[fps_index],
+                                                    available_fps[fps_index + 1])
 
-        if level == 1 or not tune_msg:
-            print(" -------- resolution higher -------- ")
-            if resolution_index + 1 < len(available_resolution):
-                next_video_conf["resolution"] = available_resolution[resolution_index + 1]
-                tune_msg = "resolution {} -> {}".format(available_resolution[resolution_index],
-                                                        available_resolution[resolution_index + 1])
+            elif tune_level == 1:
+                if resolution_index + 1 < len(available_resolution):
+                    print(" -------- resolution higher -------- (level={}, tune_msg={})".format(level, tune_msg))
+                    next_video_conf["resolution"] = available_resolution[resolution_index + 1]
+                    tune_msg = "resolution {} -> {}".format(available_resolution[resolution_index],
+                                                            available_resolution[resolution_index + 1])
+            
+            # 按优先级依次选择可调的配置
+            if not tune_msg:
+                tune_level -= 1
 
     elif level < 0:
         # level < 0，调整策略以降低时延：降低fps和resolution，卸载到云端
-        if level == -3:
-            # cloud
-            print(" -------- send to cloud -------- ")
-            for taskname, task_mapping in reversed(list(next_flow_mapping.items())):
-                if task_mapping["node_role"] == "host":
-                    next_flow_mapping[taskname]["node_role"] = "cloud"
-                    next_flow_mapping[taskname]["node_ip"] = list(
-                        resource_info["cloud"].keys())[0]
-                    tune_msg = "task-{} send to cloud".format(taskname)
-                    break
+        tune_level = level
+        while not tune_msg and tune_level:
+            if tune_level == -3:
+                # cloud
+                for taskname, task_mapping in reversed(list(next_flow_mapping.items())):
+                    if task_mapping["node_role"] == "host":
+                        print(" -------- send to cloud -------- (level={}, tune_msg={})".format(level, tune_msg))
+                        next_flow_mapping[taskname]["node_role"] = "cloud"
+                        next_flow_mapping[taskname]["node_ip"] = list(
+                            resource_info["cloud"].keys())[0]
+                        tune_msg = "task-{} send to cloud".format(taskname)
+                        break
 
-        if level == -2 or not tune_msg:
-            print(" -------- fps lower -------- ")
-            if fps_index > 0:
-                next_video_conf["fps"] = available_fps[fps_index - 1]
-                tune_msg = "fps {} -> {}".format(available_fps[fps_index],
-                                                 available_fps[fps_index - 1])
+            if tune_level == -2:
+                if fps_index > 0:
+                    print(" -------- fps lower -------- (level={}, tune_msg={})".format(level, tune_msg))
+                    next_video_conf["fps"] = available_fps[fps_index - 1]
+                    tune_msg = "fps {} -> {}".format(available_fps[fps_index],
+                                                    available_fps[fps_index - 1])
 
-        if level == -1 or not tune_msg:
-            print(" -------- resolution lower -------- ")
-            if resolution_index > 0:
-                next_video_conf["resolution"] = available_resolution[resolution_index - 1]
-                tune_msg = "resolution {} -> {}".format(available_resolution[resolution_index],
-                                                        available_resolution[resolution_index - 1])
+            if tune_level == -1:
+                if resolution_index > 0:
+                    print(" -------- resolution lower -------- (level={}, tune_msg={})".format(level, tune_msg))
+                    next_video_conf["resolution"] = available_resolution[resolution_index - 1]
+                    tune_msg = "resolution {} -> {}".format(available_resolution[resolution_index],
+                                                            available_resolution[resolution_index - 1])
+            
+            # 按优先级依次选择可调的配置
+            if not tune_msg:
+                tune_level -= 1
 
 
     prev_video_conf[job_uid] = next_video_conf
