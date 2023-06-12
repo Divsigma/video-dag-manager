@@ -267,7 +267,8 @@ def cloud_scheduler_loop(query_manager=None):
     # import scheduler_func.demo_scheduler
     # import scheduler_func.pid_scheduler
     # import scheduler_func.pid_mogai_scheduler
-    import scheduler_func.pid_content_aware_scheduler
+    # import scheduler_func.pid_content_aware_scheduler
+    import scheduler_func.lat_first_pid
 
 
     while True:
@@ -299,7 +300,8 @@ def cloud_scheduler_loop(query_manager=None):
                 runtime_info = r.json()
 
                 # conf, flow_mapping = scheduler_func.pid_mogai_scheduler.scheduler(
-                conf, flow_mapping = scheduler_func.pid_content_aware_scheduler.scheduler(
+                # conf, flow_mapping = scheduler_func.pid_content_aware_scheduler.scheduler(
+                conf, flow_mapping = scheduler_func.lat_first_pid.scheduler(
                     # flow=job.get_dag_flow(),
                     job_uid=query_id,
                     dag={"generator": "x", "flow": query.pipeline},
