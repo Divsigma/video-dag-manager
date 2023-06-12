@@ -32,6 +32,8 @@ class Query():
         assert isinstance(self.pipeline, list)
         # 查询指令结果
         self.result = None
+        # 查询指令运行时情境
+        self.current_runtime = dict
 
     # ---------------------------------------
     # ---- 属性 ----
@@ -43,6 +45,12 @@ class Query():
 
     def get_plan(self):
         return {"video_conf": self.video_conf, "flow_mapping": self.flow_mapping}
+    
+    def set_runtime(self, runtime_info):
+        self.current_runtime = runtime_info
+    
+    def get_runtime(self):
+        return self.current_runtime
 
     def set_user_constraint(self, user_constraint):
         self.user_constraint = user_constraint
@@ -140,6 +148,20 @@ class QueryManager():
         query = self.query_dict[query_id]
         assert isinstance(query, Query)
         return query.get_result()
+    
+    def get_query_plan(self, query_id):
+        assert query_id in self.query_dict
+
+        query = self.query_dict[query_id]
+        assert isinstance(query, Query)
+        return query.get_plan()
+
+    def get_query_runtime(self, query_id):
+        assert query_id in self.query_dict
+
+        query = self.query_dict[query_id]
+        assert isinstance(query, Query)
+        return query.get_runtime()
 
 
 
@@ -206,7 +228,7 @@ def user_submit_query_cbk():
                                 json=new_job_info)
 
     return flask.jsonify({"status": 0,
-                          "msg": "submitted to (cloud) manager from api: /user/submit_job",
+                          "msg": "submitted to (cloud) manager from api: /query/submit_query",
                           "query_id": job_uid})
 
 # TODO：同步job的执行结果
@@ -226,6 +248,26 @@ def query_sync_result_cbk():
 @flask_cors.cross_origin()
 def query_get_result_cbk(query_id):
     return flask.jsonify(query_manager.get_query_result(query_id))
+
+@query_app.route("/query/get_plan/<query_id>", methods=["GET"])
+@flask_cors.cross_origin()
+def query_get_plan_cbk(query_id):
+    return flask.jsonify(query_manager.get_query_plan(query_id))
+@query_app.route("/query/get_runtime/<query_id>", methods=["GET"])
+@flask_cors.cross_origin()
+def query_get_runtime_cbk(query_id):
+    return flask.jsonify(query_manager.get_query_runtime(query_id))
+
+@query_app.route("/query/get_agg_info/<query_id>", methods=["GET"])
+@flask_cors.cross_origin()
+def query_get_agg_info_cbk(query_id):
+    resp = dict()
+    resp.update(query_manager.get_query_result(query_id))
+
+    resp["latest_result"] = dict()
+    resp["latest_result"]["plan"] = query_manager.get_query_plan(query_id)
+    resp["latest_result"]["runtime"] = query_manager.get_query_runtime(query_id)
+    return flask.jsonify(resp)
 
 @query_app.route("/node/get_video_info", methods=["GET"])
 @flask_cors.cross_origin()
@@ -298,6 +340,8 @@ def cloud_scheduler_loop(query_manager=None):
                     url="http://{}/job/get_runtime/{}".format(node_addr, query_id)
                 )
                 runtime_info = r.json()
+                # 更新查询的运行时情境（以便用户从云端获取）
+                query.set_runtime(runtime_info=runtime_info)
 
                 # conf, flow_mapping = scheduler_func.pid_mogai_scheduler.scheduler(
                 # conf, flow_mapping = scheduler_func.pid_content_aware_scheduler.scheduler(
@@ -311,6 +355,8 @@ def cloud_scheduler_loop(query_manager=None):
                     user_constraint=user_constraint
                 )
 
+                # 更新查询策略（以便用户从云端获取）
+                query.set_plan(video_conf=conf, flow_mapping=flow_mapping)
                 # 主动post策略到对应节点（即更新对应视频流query pipeline的执行策略），让节点代理执行，不等待执行结果
                 r = query_manager.sess.post(url="http://{}/job/update_plan".format(node_addr),
                             json={"job_uid": query_id, "video_conf": conf, "flow_mapping": flow_mapping})

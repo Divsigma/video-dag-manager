@@ -141,8 +141,14 @@ edge$ python3 job_manager.py \
         "accuracy": 0.9
     }
 }
+返回数据：
+{
+    "msg": "submitted to (cloud) manager from api: /query/submit_query",
+    "query_id": "GLOBAL_ID_1",
+    "status": 0
+}
 
-描述：边端同步查询结果
+描述：边端同步查询的处理结果
 接口：POST :5000/query/sync_result/<query_id>
 请求数据：
 {
@@ -150,59 +156,67 @@ edge$ python3 job_manager.py \
 }
 
 描述：从云端获取指定任务的结果
-接口：GET :5000/query/get_result/<query_id>
+接口：GET :5000/query/get_agg_info/<query_id>
 返回结果：
 {
-    "result": {
-        // 该部分是列表，代表最近10帧的处理结果
-        "appended_result": [
-            {
-                "#no_helmet": 1,
-                "n_loop": 11
+    // 该部分是列表，代表最近10帧的处理结果
+    "appended_result": [
+        {
+            "count_result": {
+                "#no_helmet": 1
             },
-            {
-                "#no_helmet": 1,
-                "n_loop": 12
+            "n_loop": 11,
+            "frame_id": 300,
+            "delay": 0.2
+        },
+        {
+            "count_result": {
+                "#no_helmet": 1
             },
-            {
-                "#no_helmet": 1,
-                "n_loop": 13
+            "n_loop": 12,
+            "frame_id": 305,
+            "delay": 0.2
+        },
+        {
+            "count_result": {
+                "#no_helmet": 1
             },
-            ...
-        ],
+            "n_loop": 13,
+            "frame_id": 310,
+            "delay": 0.2
+        },
+        ...
+    ],
 
-        // 该部分是json，代表最近一次调度的调度策略和调度结果
-        "latest_result": {
-            // 当前调度执行计划
-            "plan": {
-                "flow_mapping": {
-                    "face_detection": {
-                        "model_id": 0,
-                        "node_ip": "192.168.56.102",
-                        "node_role": "host"  // node_role有三种可能：host、edge、cloud，前端只区分cloud和非cloud，非cloud显示为“边端”
-                    },
-                    "face_alignment": {
-                        "model_id": 0,
-                        "node_ip": "192.168.56.102",
-                        "node_role": "cloud"
-                    }
+    // 该部分是json，代表最近一次调度的调度策略和运行时情境
+    "latest_result": {
+        // 当前调度执行计划
+        "plan": {
+            "flow_mapping": {
+                "face_detection": {
+                    "model_id": 0,
+                    "node_ip": "192.168.56.102",
+                    "node_role": "host"  // node_role有三种可能：host、edge、cloud，前端只区分cloud和非cloud，非cloud显示为“边端”
                 },
-                "video_conf": {
-                    "encoder": "H264",
-                    "fps": 24,
-                    "resolution": "360p"
+                "face_alignment": {
+                    "model_id": 0,
+                    "node_ip": "192.168.56.102",
+                    "node_role": "cloud"
                 }
             },
-            // 最近一次调度后，DAG执行各步骤的平均结果
-            "plan_result": {
-                "delay": {
-                    "face_detection": 0.35737492098952783,
-                    "face_alignment": 0.35737492098952783
-                }
+            "video_conf": {
+                "encoder": "JEPG",
+                "fps": 1,
+                "resolution": "360p"
             }
+        },
+        // 最近一次的运行时情境
+        "runtime": {
+            "delay": 0.05,
+            "obj_n": 2,
+            "obj_size": 624.125
         }
-    },
-    "status": 0
+    }
 }
 ```
 
