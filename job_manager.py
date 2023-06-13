@@ -37,7 +37,11 @@ resolution_wh = {
     }
 }
 
+# 视频流sidechan
+video_q = mp.Queue(50)
+
 def sfg_get_next_init_task(
+    job_uid=None,
     video_cap=None,
     video_conf=None,
     curr_cam_frame_id=None,
@@ -46,6 +50,7 @@ def sfg_get_next_init_task(
     assert video_cap
 
     global resolution_wh
+    global video_q
 
     # 从视频流读取一帧，根据fps跳帧
     cam_fps = video_cap.get(cv2.CAP_PROP_FPS)
@@ -58,6 +63,16 @@ def sfg_get_next_init_task(
         # 从video_fps中实际读取
         cam_frame_id = video_cap.get(cv2.CAP_PROP_POS_FRAMES)
         ret, frame = video_cap.read()
+
+        # 视频流sidechan
+        video_q.put_nowait({
+            "job_uid": job_uid,
+            "image_type": "jpeg",
+            "image_bytes": field_codec_utils.encode_image_tobytes(
+                cv2.resize(frame, (480, 360))
+            )
+        })
+
         assert ret
 
         conf_frame_id = math.floor((conf_fps * 1.0 / cam_fps) * cam_frame_id)
@@ -318,7 +333,8 @@ class Job():
         while True:
             # 1、根据video_conf，获取本次循环的输入数据（TODO：从缓存区读取）
             cam_frame_id, conf_frame_id, output_ctx = \
-                sfg_get_next_init_task(video_cap=cap,
+                sfg_get_next_init_task(job_uid=self.get_job_uid(),
+                                       video_cap=cap,
                                        video_conf=self.video_conf,
                                        curr_cam_frame_id=curr_cam_frame_id,
                                        curr_conf_frame_id=curr_conf_frame_id)
@@ -501,6 +517,13 @@ if __name__ == "__main__":
     root_logger.info("joined to query controller")
     
     job_manager.set_service_cloud_addr(addr=args.serv_cloud_addr)
+
+    # 启动视频流sidechan（由云端转发请求到边端）
+    import edge_sidechan
+    video_serv_inter_port = 5101
+    mp.Process(target=edge_sidechan.init_and_start_video_proc,
+               args=(video_q, video_serv_inter_port,)).start()
+    time.sleep(1)
 
     # 线程轮询启动循环
     # 一个Job对应一个视频流查询、对应一个进程/线程

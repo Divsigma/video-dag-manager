@@ -339,3 +339,26 @@ flow_mapping = {
 （1）更新运行时情境：`Job`实例每次拿到中间执行结果后，调用`update_runtime方法`。update_runtime方法会调用`Sniffer实例`的`sniff方法`，更新运行时情境（`sniff方法`本质上是维护若干个时间序列）；
 
 （2）获取运行时情境：调度器对任务调度前，请求边端的RESTFUL接口获取query（与job对应）的情境指标。该RESTFUL接口调用对应`Job实例`的`Sniffer实例`的`describe_runtime方法`，得到可用于指导调度的情境指标（`describe_runtime方法`本质上是基于现有的情境时间序列，计算出可指导调度的指标）。
+
+## 8 视频流sidechan接口
+
+```js
+描述：云端建立任务与视频流地址关系
+接口：POST：5101/user/update_node_addr
+请求数据：
+{
+    "job_uid": "GLOBAL_ID_1",
+    "node_addr": "172.28.16.100:5101"
+}
+
+描述：云端对外获取视频帧的接口，该接口的请求将被转发到对应边端的5101同名接口
+接口：GET：5100/user/video/<job_uid>
+返回数据：参见`GET：5101/user/video/<job_uid>`的返回
+
+描述：边缘端直接返回结果帧（无渲染），由云端请求
+接口：GET：5101/user/video/<job_uid>
+返回数据
+{
+    直接获取`Content-Type: image/jpeg`的帧
+}
+```

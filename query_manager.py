@@ -226,10 +226,18 @@ def user_submit_query_cbk():
     # TODO：在边缘端为每个query创建一个job
     r = query_manager.sess.post("http://{}/job/submit_job".format(node_addr), 
                                 json=new_job_info)
+    
+    # TODO：更新sidechan信息
+    # cloud_ip = manager.get_cloud_addr().split(":")[0]
+    cloud_ip = "127.0.0.1"
+    r_sidechan = query_manager.sess.post(url="http://{}:{}/user/update_node_addr".format(cloud_ip, 5100),
+                                   json={"job_uid": job_uid,
+                                         "node_addr": node_addr.split(":")[0] + ":5101"})
 
     return flask.jsonify({"status": 0,
                           "msg": "submitted to (cloud) manager from api: /query/submit_query",
-                          "query_id": job_uid})
+                          "query_id": job_uid,
+                          "r_sidechan": r_sidechan.text})
 
 # TODO：同步job的执行结果
 @query_app.route("/query/sync_result", methods=["POST"])
@@ -341,7 +349,8 @@ def cloud_scheduler_loop(query_manager=None):
                 )
                 runtime_info = r.json()
                 # 更新查询的运行时情境（以便用户从云端获取）
-                query.set_runtime(runtime_info=runtime_info)
+                if runtime_info:
+                    query.set_runtime(runtime_info=runtime_info)
 
                 # conf, flow_mapping = scheduler_func.pid_mogai_scheduler.scheduler(
                 # conf, flow_mapping = scheduler_func.pid_content_aware_scheduler.scheduler(
@@ -382,5 +391,12 @@ if __name__ == "__main__":
     time.sleep(1)
 
     query_manager.set_service_cloud_addr(addr=args.serv_cloud_addr)
+
+    # 启动视频流sidechan（由云端转发请求到边端）
+    import cloud_sidechan
+    video_serv_inter_port = 5100
+    mp.Process(target=cloud_sidechan.init_and_start_video_proc,
+               args=(video_serv_inter_port,)).start()
+    time.sleep(1)
 
     cloud_scheduler_loop(query_manager)
