@@ -323,7 +323,7 @@ def cloud_scheduler_loop(query_manager=None):
 
     while True:
         # 每5s调度一次
-        time.sleep(5)
+        time.sleep(3)
 
         root_logger.info("start new schedule ...")
         try:

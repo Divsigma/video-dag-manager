@@ -1,3 +1,4 @@
+import numpy as np
 
 class Sniffer():
     CONTENT_ELE_MAXN = 50
@@ -44,6 +45,10 @@ class Sniffer():
         runtime_desc = dict()
         for k, v in self.runtime_pkg_list.items():
             runtime_desc[k] = sum(v) * 1.0 / len(v)
+        
+        # 获取场景稳定性
+        if 'obj_n' in self.runtime_pkg_list.keys():
+            runtime_desc['obj_stable'] = True if np.std(self.runtime_pkg_list['obj_n']) < 0.3 else False
 
         # 每次调用agg后清空
         self.runtime_pkg_list = dict()
