@@ -5,6 +5,7 @@ import time
 import json
 from logging_utils import root_logger
 from werkzeug.serving import WSGIRequestHandler
+import argparse
 
 # 单例：接收输入的主线程
 WSGIRequestHandler.protocol_version = "HTTP/1.1"
@@ -214,8 +215,13 @@ def start_serv_listener(serv_port=5500):
     app.run(host="0.0.0.0", port=serv_port)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port', dest='port',
+                        type=int, default=5500)
+    args = parser.parse_args()
+
     # 背景线程：对外接收输入数据，提供计算服务
-    threading.Thread(target=start_serv_listener, args=(5500, ), daemon=True).start()
+    threading.Thread(target=start_serv_listener, args=(args.port, ), daemon=True).start()
 
     # 服务线程：从任务队列获取数据，执行服务
     while True:
