@@ -17,8 +17,9 @@ class Sniffer():
                 del self.runtime_pkg_list['delay'][0]
             self.runtime_pkg_list['delay'].append(output_ctx['delay'])
 
-        # 对detection的结果，提取目标数量、目标大小、目标速度
-        if taskname == 'face_detection':
+        # 对face_detection的结果，提取运行时情境
+        # TODO：目标数量、目标大小、目标速度
+        if taskname == 'face_detection' :
             # 定义运行时情境字段
             if 'obj_n' not in self.runtime_pkg_list:
                 self.runtime_pkg_list['obj_n'] = list()
@@ -39,6 +40,22 @@ class Sniffer():
             if len(self.runtime_pkg_list['obj_size']) > Sniffer.CONTENT_ELE_MAXN:
                 del self.runtime_pkg_list['obj_size'][0]
             self.runtime_pkg_list['obj_size'].append(obj_size)
+        
+        # 对car_detection的结果，提取目标数量
+        # TODO：目标数量、目标大小、目标速度
+        if taskname == 'car_detection':
+            # 定义运行时情境字段
+            if 'obj_n' not in self.runtime_pkg_list:
+                self.runtime_pkg_list['obj_n'] = list()
+
+            # 更新各字段序列（防止爆内存）
+            if len(self.runtime_pkg_list['obj_n']) > Sniffer.CONTENT_ELE_MAXN:
+                del self.runtime_pkg_list['obj_n'][0]
+            self.runtime_pkg_list['obj_n'].append(
+                sum(list(output_ctx['count_result'].values()))
+            )
+            
+
             
     def describe_runtime(self):
         # TODO：聚合情境感知参数的时间序列，给出预估值/统计值
