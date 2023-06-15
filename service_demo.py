@@ -2,6 +2,7 @@ import flask
 import queue
 import threading
 import time
+import random
 import json
 from logging_utils import root_logger
 from werkzeug.serving import WSGIRequestHandler
@@ -53,16 +54,12 @@ cluster_info = {
     "127.0.0.1": {
         "node_role": "cloud",
         "n_cpu": 8,
-        "cpu_ratio": 2.5,
-        "mem": 4096 * 32,
-        "mem_ratio": 0.3
+        "cpu_ratio": 2.5
     },
     "127.0.0.2": {
         "node_role": "edge",
         "n_cpu": 4,
-        "cpu_ratio": 2.5,
-        "mem": 4096,
-        "mem_ratio": 0.3
+        "cpu_ratio": 2.5
     }
 }
 
@@ -196,7 +193,12 @@ def get_resource_info_cbk():
 
 @app.route("/get_cluster_info", methods=["GET"])
 def get_cluster_info_cbk():
-    return flask.jsonify(cluster_info)
+    global cluster_info
+
+    resp_info = cluster_info.copy()
+    for ip, info in cluster_info.items():
+        resp_info[ip]["cpu_ratio"] = round(info["n_cpu"] - random.random(), 2)
+    return flask.jsonify(resp_info)
 
 @app.route("/execute_task/<serv_name>", methods=["POST"])
 def get_serv_cbk(serv_name):
