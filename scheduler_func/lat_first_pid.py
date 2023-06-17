@@ -337,6 +337,15 @@ def adjust_parameters(output=0, job_uid=None,
                 # 按优先级依次选择可调的配置
                 if not tune_msg:
                     tune_level -= 1
+        else:
+            if 'obj_stable' in runtime_info and runtime_info['obj_stable']:
+                # 场景稳定，优先降低帧率
+                init_prior = 1
+                best_effort = False
+                tune_msg, next_video_conf = try_reduce_calculation(next_video_conf=next_video_conf, 
+                                                                err_level=err_level, 
+                                                                runtime_info=runtime_info,
+                                                                init_prior=init_prior, best_effort=best_effort)
 
     elif err_level < 0:
         # level < 0，时延不满足要求
