@@ -18,6 +18,8 @@ import field_codec_utils
 from logging_utils import root_logger
 import logging_utils
 
+import common
+
 resolution_wh = {
     "360p": {
         "w": 480,
@@ -292,7 +294,10 @@ class Job():
         assert isinstance(self.video_conf, dict)
 
     def get_plan(self):
-        return {"video_conf": self.video_conf, "flow_mapping": self.flow_mapping}
+        return {
+            common.PLAN_KEY_VIDEO_CONF: self.video_conf,
+            common.PLAN_KEY_FLOW_MAPPING: self.flow_mapping
+        }
 
     def set_user_constraint(self, user_constraint):
         self.user_constraint = user_constraint
@@ -331,7 +336,7 @@ class Job():
 
         # 逐帧汇报结果，逐帧汇报运行时情境
         while True:
-            # 1、根据video_conf，获取本次循环的输入数据（TODO：从缓存区读取）
+            # ---- 1、根据video_conf，获取本次循环的输入数据（TODO：从缓存区读取） ----
             cam_frame_id, conf_frame_id, output_ctx = \
                 sfg_get_next_init_task(job_uid=self.get_job_uid(),
                                        video_cap=cap,
@@ -340,7 +345,7 @@ class Job():
                                        curr_conf_frame_id=curr_conf_frame_id)
             root_logger.info("done generator task, get_next_init_task({})".format(output_ctx.keys()))
             
-            # 2、执行
+            # ---- 2、执行，同步更新运行时情境 ----
             frame_result = dict()
             plan_result = dict()
             plan_result['delay'] = dict()
@@ -393,20 +398,21 @@ class Job():
             output_ctx["delay"] = total_frame_delay
             frame_result.update(output_ctx)
 
+            # 将当前帧的运行时情境和调度策略同步推送到云端query manager
+            frame_result[common.SYNC_RESULT_KEY_PLAN] = self.get_plan()
+            frame_result[common.SYNC_RESULT_KEY_RUNTIME] = self.get_runtime()
+
             curr_cam_frame_id = cam_frame_id
             curr_conf_frame_id = conf_frame_id
 
-            # 3、通过job manager同步结果到query manager
-            #    注意：本地不保存结果
-            self.manager.sync_job_result(job_uid=self.get_job_uid(),
-                                           job_result={
-                                            #    "appended_result": frame_result
-                                               "appended_result": frame_result,
-                                               "latest_result": {
-                                                   "plan": self.get_plan()
-                                            #        "plan_result": plan_result
-                                                }
-                                            })
+            # ---- 3、通过job manager同步结果到query manager ----
+            # 注意：本地不保存结果
+            self.manager.sync_job_result(
+                job_uid=self.get_job_uid(),
+                job_result={
+                    common.SYNC_RESULT_KEY_APPEND: frame_result,
+                }
+            )
 
 
     def invoke_service(self, serv_url, taskname, input_ctx):

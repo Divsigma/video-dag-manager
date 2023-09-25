@@ -17,6 +17,8 @@ import field_codec_utils
 from logging_utils import root_logger
 import logging_utils
 
+import common
+
 class Query():
 
     def __init__(self, query_id, node_addr, video_id, pipeline, user_constraint):
@@ -33,24 +35,46 @@ class Query():
         # 查询指令结果
         self.result = None
         # 查询指令运行时情境
-        self.current_runtime = dict
+        self.current_runtime = dict()
+        # 历史记录
+        self.plan_list = []
+        self.runtime_list = []
 
     # ---------------------------------------
     # ---- 属性 ----
     def set_plan(self, video_conf, flow_mapping):
+        while len(self.plan_list) >= QueryManager.LIST_BUFFER_SIZE_PER_QUERY:
+            print("len(self.plan_list)={}".format(len(self.plan_list)))
+            del self.plan_list[0]
+        self.plan_list.append(self.get_plan())
+
         self.flow_mapping = flow_mapping
         self.video_conf = video_conf
         assert isinstance(self.flow_mapping, dict)
         assert isinstance(self.video_conf, dict)
 
     def get_plan(self):
-        return {"video_conf": self.video_conf, "flow_mapping": self.flow_mapping}
+        return {
+            common.PLAN_KEY_VIDEO_CONF: self.video_conf,
+            common.PLAN_KEY_FLOW_MAPPING: self.flow_mapping
+        }
     
     def set_runtime(self, runtime_info):
+        while len(self.runtime_list) >= QueryManager.LIST_BUFFER_SIZE_PER_QUERY:
+            print("len(self.runtime_list)={}".format(len(self.runtime_list)))
+            del self.runtime_list[0]
+        self.runtime_list.append(self.current_runtime)
+
         self.current_runtime = runtime_info
     
     def get_runtime(self):
         return self.current_runtime
+    
+    def set_plan_and_runtime(self, video_conf, flow_mapping, runtime_info):
+        if not runtime_info:
+            runtime_info = dict()
+        self.set_plan(video_conf=video_conf, flow_mapping=flow_mapping)
+        self.set_runtime(runtime_info=runtime_info)
 
     def set_user_constraint(self, user_constraint):
         self.user_constraint = user_constraint
@@ -63,32 +87,40 @@ class Query():
         return self.query_id
     
     def update_result(self, new_result):
+        '''
+        更新query的处理结果。
+        该函数由query对应的job通过RESTFUL API触发，参见/query/sync_result接口
+        '''
         if not self.result:
-            self.result = {"appended_result": list(), "latest_result": dict()}
+            self.result = {
+                common.SYNC_RESULT_KEY_APPEND: list(),
+                common.SYNC_RESULT_KEY_LATEST: dict()
+            }
         assert isinstance(self.result, dict)
 
         for k, v in new_result.items():
             assert k in self.result.keys()
-            if k == "appended_result":
+            if k == common.SYNC_RESULT_KEY_APPEND:
                 # 仅保留最近一批结果（防止爆内存）
                 if len(self.result[k]) > QueryManager.LIST_BUFFER_SIZE_PER_QUERY:
                     del self.result[k][0]
                 self.result[k].append(v)
-            else:
+
+                # 更新runtime和plan
+                if isinstance(v, dict):
+                    assert(common.SYNC_RESULT_KEY_PLAN in v.keys())
+                    assert(common.SYNC_RESULT_KEY_RUNTIME in v.keys())
+                    self.set_plan_and_runtime(
+                        video_conf=v[common.SYNC_RESULT_KEY_PLAN][common.PLAN_KEY_VIDEO_CONF],
+                        flow_mapping=v[common.SYNC_RESULT_KEY_PLAN][common.PLAN_KEY_FLOW_MAPPING],
+                        runtime_info=v[common.SYNC_RESULT_KEY_RUNTIME]
+                    )
+            elif k == common.SYNC_RESULT_KEY_LATEST:
                 # 直接替换结果
                 assert isinstance(v, dict)
                 self.result[k].update(v)
-    
-    def get_last_plan_result(self):
-        if self.result and 'latest_result' in self.result:
-            if 'plan_result' in self.result['latest_result']:
-                return self.result['latest_result']['plan_result']
-        return None
-    
-    def get_appended_result_list(self):
-        if self.result and 'appended_result' in self.result:
-            return self.result['appended_result']
-        return None
+            else:
+                root_logger.error("unsupported sync result key: {}. value is: {}".format(k, v))
     
     def get_result(self):
         return self.result
@@ -272,9 +304,9 @@ def query_get_agg_info_cbk(query_id):
     resp = dict()
     resp.update(query_manager.get_query_result(query_id))
 
-    resp["latest_result"] = dict()
-    resp["latest_result"]["plan"] = query_manager.get_query_plan(query_id)
-    resp["latest_result"]["runtime"] = query_manager.get_query_runtime(query_id)
+    # resp["latest_result"] = dict()
+    # resp["latest_result"]["plan"] = query_manager.get_query_plan(query_id)
+    # resp["latest_result"]["runtime"] = query_manager.get_query_runtime(query_id)
     return flask.jsonify(resp)
 
 @query_app.route("/node/get_video_info", methods=["GET"])
@@ -339,18 +371,15 @@ def cloud_scheduler_loop(query_manager=None):
 
                 query_id = query.query_id
                 node_addr = query.node_addr
-                # last_plan_result = query.get_last_plan_result()
                 user_constraint = query.user_constraint
                 assert node_addr
 
                 # 获取当前query的运行时情境（query_id == job_uid
-                r = query_manager.sess.get(
-                    url="http://{}/job/get_runtime/{}".format(node_addr, query_id)
-                )
-                runtime_info = r.json()
-                # 更新查询的运行时情境（以便用户从云端获取）
-                if runtime_info:
-                    query.set_runtime(runtime_info=runtime_info)
+                # r = query_manager.sess.get(
+                #     url="http://{}/job/get_runtime/{}".format(node_addr, query_id)
+                # )
+                # runtime_info = r.json()
+                runtime_info = query.get_runtime()
 
                 # conf, flow_mapping = scheduler_func.pid_mogai_scheduler.scheduler(
                 # conf, flow_mapping = scheduler_func.pid_content_aware_scheduler.scheduler(
@@ -364,8 +393,9 @@ def cloud_scheduler_loop(query_manager=None):
                     user_constraint=user_constraint
                 )
 
-                # 更新查询策略（以便用户从云端获取）
-                query.set_plan(video_conf=conf, flow_mapping=flow_mapping)
+                # # 更新运行时情境和查询策略（以便用户从云端获取）
+                # query.set_plan_and_runtime(video_conf=conf, flow_mapping=flow_mapping, runtime_info=runtime_info)
+
                 # 主动post策略到对应节点（即更新对应视频流query pipeline的执行策略），让节点代理执行，不等待执行结果
                 r = query_manager.sess.post(url="http://{}/job/update_plan".format(node_addr),
                             json={"job_uid": query_id, "video_conf": conf, "flow_mapping": flow_mapping})

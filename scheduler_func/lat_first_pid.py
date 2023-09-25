@@ -422,7 +422,7 @@ def scheduler(
 
     global lastTime
 
-    if not runtime_info or not user_constraint:
+    if not bool(runtime_info) or not bool(user_constraint):
         root_logger.info("to get COLD start executation plan")
         return get_cold_start_plan(
             job_uid=job_uid,
