@@ -167,56 +167,39 @@ edge$ python3 job_manager.py \
             },
             "n_loop": 11,
             "frame_id": 300,
-            "delay": 0.2
-        },
-        {
-            "count_result": {
-                "#no_helmet": 1
+            "delay": 0.2,
+            // 当前帧的调度执行计划
+            "ext_plan": {
+                "flow_mapping": {
+                    "face_detection": {
+                        "model_id": 0,
+                        "node_ip": "192.168.56.102",
+                        "node_role": "host"  // node_role有三种可能：host、edge、cloud，前端只区分cloud和非cloud，非cloud显示为“边端”
+                    },
+                    "face_alignment": {
+                        "model_id": 0,
+                        "node_ip": "192.168.56.102",
+                        "node_role": "cloud"
+                    }
+                },
+                "video_conf": {
+                    "encoder": "JEPG",
+                    "fps": 1,
+                    "resolution": "360p"
+                }
             },
-            "n_loop": 12,
-            "frame_id": 305,
-            "delay": 0.2
-        },
-        {
-            "count_result": {
-                "#no_helmet": 1
-            },
-            "n_loop": 13,
-            "frame_id": 310,
-            "delay": 0.2
+            // 当前帧的运行时情境
+            "ext_runtime": {
+                "delay": 0.05,
+                "obj_n": 2,
+                "obj_stable": true
+            }
         },
         ...
     ],
 
-    // 该部分是json，代表最近一次调度的调度策略和运行时情境
-    "latest_result": {
-        // 当前调度执行计划
-        "plan": {
-            "flow_mapping": {
-                "face_detection": {
-                    "model_id": 0,
-                    "node_ip": "192.168.56.102",
-                    "node_role": "host"  // node_role有三种可能：host、edge、cloud，前端只区分cloud和非cloud，非cloud显示为“边端”
-                },
-                "face_alignment": {
-                    "model_id": 0,
-                    "node_ip": "192.168.56.102",
-                    "node_role": "cloud"
-                }
-            },
-            "video_conf": {
-                "encoder": "JEPG",
-                "fps": 1,
-                "resolution": "360p"
-            }
-        },
-        // 最近一次的运行时情境
-        "runtime": {
-            "delay": 0.05,
-            "obj_n": 2,
-            "obj_size": 624.125
-        }
-    }
+    // 留空
+    "latest_result": {}
 }
 ```
 
